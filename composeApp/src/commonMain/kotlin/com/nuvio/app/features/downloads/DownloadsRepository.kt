@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
@@ -55,17 +56,22 @@ object DownloadsRepository {
             DownloadsSettingsRepository.concurrencyLimits,
             DownloadsSettingsRepository.allowMobileDataDownloads,
             NetworkStatusRepository.uiState,
-        ) { _, _, _ -> }
+        ) { limits, allowMobile, networkState ->
+            limits to (allowMobile || DownloadNetworkGuard.isOnWifi())
+        }
+            .distinctUntilChanged()
             .onEach {
                 if (!hasLoaded) return@onEach
                 if (!isDownloadNetworkAllowed()) {
-                    _uiState.value.items.filter { it.status == DownloadStatus.Downloading }.forEach { item ->
-                        activeHandles.remove(item.id)?.cancel()
-                        mutateItem(item.id) { current ->
-                            if (current.status == DownloadStatus.Downloading) current.copy(status = DownloadStatus.Queued) else current
-                        }
+                    val running = _uiState.value.items.filter { it.status == DownloadStatus.Downloading }
+                    if (running.isNotEmpty()) {
+                        running.forEach { activeHandles.remove(it.id)?.cancel() }
+                        val ids = running.mapTo(mutableSetOf()) { it.id }
+                        publish(_uiState.value.items.map { item ->
+                            if (item.id in ids && item.status == DownloadStatus.Downloading) item.copy(status = DownloadStatus.Queued) else item
+                        })
+                        persist()
                     }
-                    persist()
                 }
                 advanceDownloadQueue()
             }
@@ -337,7 +343,9 @@ object DownloadsRepository {
             startDownload(item)
         }
 
-        return if (replacedExisting) {
+        return if (item.status == DownloadStatus.Queued) {
+            DownloadEnqueueResult.Queued
+        } else if (replacedExisting) {
             DownloadEnqueueResult.Replaced
         } else {
             DownloadEnqueueResult.Started
@@ -348,16 +356,20 @@ object DownloadsRepository {
     fun advanceDownloadQueue() {
         ensureLoaded()
         val policy = DownloadQueuePolicy.current()
+        val items = _uiState.value.items.toMutableList()
+        val started = mutableListOf<DownloadItem>()
         while (true) {
-            val next = policy.nextToStart(_uiState.value.items) ?: break
-            mutateItem(next.id) { current ->
-                current.copy(
-                    status = DownloadStatus.Downloading,
-                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-                    errorMessage = null,
-                )
-            }
-            _uiState.value.items.firstOrNull { it.id == next.id }?.let(::startDownload)
+            val next = policy.nextToStart(items) ?: break
+            val replacement = next.copy(status = DownloadStatus.Downloading, updatedAtEpochMs = DownloadsClock.nowEpochMs(), errorMessage = null)
+            val index = items.indexOfFirst { it.id == next.id }
+            if (index < 0) break
+            items[index] = replacement
+            started += replacement
+        }
+        if (started.isNotEmpty()) {
+            publish(items)
+            persist()
+            started.forEach(::startDownload)
         }
     }
 

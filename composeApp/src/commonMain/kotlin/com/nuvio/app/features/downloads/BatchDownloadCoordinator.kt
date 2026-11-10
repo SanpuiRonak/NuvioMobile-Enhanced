@@ -502,7 +502,7 @@ object BatchDownloadCoordinator {
             stream = stream,
             showMeta = meta,
         )
-        val succeeded = result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced
+        val succeeded = result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced || result == DownloadEnqueueResult.Queued
         if (!succeeded) InAppLogger.warn("Downloads/Batch", "Enqueue returned ${result.name} for S${target.season}E${target.episode}")
         return succeeded
     }

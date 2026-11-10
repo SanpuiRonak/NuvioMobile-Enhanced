@@ -279,7 +279,6 @@ fun MetaDetailsScreen(
     val cinematicArtworkBackdrop = rememberNuvioBackdrop()
     val cinematicContentBackdrop = rememberNuvioBackdrop()
     var selectedSeasonForActions by remember(type, id) { mutableStateOf<Int?>(null) }
-    var activeSeasonNumber by remember(type, id) { mutableStateOf<Int?>(null) }
     var userRatingSheetRequest by remember(type, id) { mutableStateOf<UserRatingSheetRequest?>(null) }
     val commentsEnabled by remember {
         TraktCommentsSettings.ensureLoaded()
@@ -946,8 +945,7 @@ fun MetaDetailsScreen(
                 val onDownloadClick: (() -> Unit)? = if (showDownloadButton) {
                     {
                         stopHeroTrailerForNavigation()
-                        val targetSeason = activeSeasonNumber
-                            ?: episodeNavigator.selectedSeason
+                        val targetSeason = episodeNavigator.selectedSeason
                             ?: seriesAction?.seasonNumber
                             ?: initialSeasonNumber
                             ?: meta.videos.mapNotNull { it.season }.firstOrNull { it > 0 }
@@ -1350,11 +1348,8 @@ fun MetaDetailsScreen(
                                         showManualPlayOption = showManualPlayOption,
                                         preferredEpisodeSeasonNumber = initialSeasonNumber ?: seriesAction?.seasonNumber,
                                         preferredEpisodeNumber = initialEpisodeNumber ?: seriesAction?.episodeNumber,
-                                        selectedSeason = activeSeasonNumber ?: episodeNavigator.selectedSeason,
-                                        onSeasonSelected = { season ->
-                                            activeSeasonNumber = season
-                                            episodeNavigator.selectSeason(season)
-                                        },
+                                        selectedSeason = episodeNavigator.selectedSeason,
+                                        onSeasonSelected = episodeNavigator::selectSeason,
                                         hasProductionSection = hasProductionSection,
                                         hasTrailersSection = hasTrailersSection,
                                         hasEpisodes = hasEpisodes,
@@ -1697,7 +1692,7 @@ fun MetaDetailsScreen(
                                 },
                                 onConfirm = {
                                     val message = when (BatchDownloadCoordinator.queuePlan()) {
-                                        BatchQueueResult.Queued -> Res.string.downloads_enqueue_started
+                                        BatchQueueResult.Queued -> Res.string.downloads_enqueue_queued_multiple
                                         BatchQueueResult.NothingToQueue -> Res.string.season_download_no_source_found
                                     }
                                     detailsScope.launch { NuvioToastController.show(getString(message)) }

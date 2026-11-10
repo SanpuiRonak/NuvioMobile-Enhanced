@@ -54,6 +54,8 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -121,7 +123,13 @@ internal class EpisodeNavigatorState {
 
 @Composable
 internal fun rememberEpisodeNavigatorState(metaId: String): EpisodeNavigatorState =
-    remember(metaId) { EpisodeNavigatorState() }
+    rememberSaveable(metaId, saver = episodeNavigatorStateSaver) { EpisodeNavigatorState() }
+
+/** Keeps the selected season across configuration changes; the rest is transient UI state. */
+private val episodeNavigatorStateSaver = Saver<EpisodeNavigatorState, List<Int?>>(
+    save = { listOf(it.selectedSeason) },
+    restore = { saved -> EpisodeNavigatorState().apply { selectedSeason = saved.firstOrNull() } },
+)
 
 internal fun MetaVideo.navigatorKey(): String = "$season:$episode:$id"
 

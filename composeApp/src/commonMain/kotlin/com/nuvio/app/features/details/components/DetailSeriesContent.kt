@@ -195,8 +195,7 @@ fun DetailSeriesContent(
     val defaultSeason = preferredSeasonNumber
         ?.takeIf { it in groupedEpisodes }
         ?: seasons.first()
-    var selectedSeasonOverride by rememberSaveable(meta.id) { mutableStateOf<Int?>(null) }
-    val currentSeason = (selectedSeason ?: selectedSeasonOverride)
+    val currentSeason = selectedSeason
         ?.takeIf { it in groupedEpisodes }
         ?: defaultSeason
 
@@ -217,7 +216,6 @@ fun DetailSeriesContent(
                 sizing = sizing,
                 horizontalScrollPadding = horizontalScrollPadding,
                 onSelect = {
-                    selectedSeasonOverride = it
                     onSeasonSelected?.invoke(it)
                 },
                 onLongPress = onSeasonLongPress,

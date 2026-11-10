@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_enqueue_missing_url
 import nuvio.composeapp.generated.resources.downloads_enqueue_replaced
+import nuvio.composeapp.generated.resources.downloads_enqueue_queued
 import nuvio.composeapp.generated.resources.downloads_enqueue_started
 import nuvio.composeapp.generated.resources.downloads_enqueue_unsupported_format
 import nuvio.composeapp.generated.resources.downloads_enqueue_requires_wifi
@@ -132,6 +133,7 @@ data class DownloadsUiState(
 enum class DownloadEnqueueResult {
     Started,
     Replaced,
+    Queued,
     MissingUrl,
     UnsupportedFormat;
 
@@ -139,6 +141,7 @@ enum class DownloadEnqueueResult {
         when (this@DownloadEnqueueResult) {
             Started -> getString(Res.string.downloads_enqueue_started)
             Replaced -> getString(Res.string.downloads_enqueue_replaced)
+            Queued -> getString(Res.string.downloads_enqueue_queued)
             MissingUrl -> getString(Res.string.downloads_enqueue_missing_url)
             UnsupportedFormat -> getString(Res.string.downloads_enqueue_unsupported_format)
         }

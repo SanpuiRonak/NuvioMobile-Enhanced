@@ -2221,6 +2221,8 @@
     <string name="downloads_enqueue_missing_url">No direct stream link available</string>
     <string name="downloads_enqueue_replaced">Replaced previous download</string>
     <string name="downloads_enqueue_started">Download started</string>
+    <string name="downloads_enqueue_queued">Download has been queued</string>
+    <string name="downloads_enqueue_queued_multiple">Downloads have been queued</string>
     <string name="downloads_enqueue_unsupported_format">Unsupported stream format for downloads</string>
     <string name="downloads_enqueue_requires_wifi">Connect to Wi-Fi to download, or allow mobile data in Downloads settings</string>
     <string name="downloads_allow_mobile_data_title">Allow mobile data</string>
