@@ -10,103 +10,65 @@ import com.nuvio.app.features.downloads.isSupportedDownloadUrl
 internal data class StreamSelectionResult(
     val stream: StreamItem,
     val facts: DebridStreamFacts,
-    val meetsPreference: Boolean,
 )
 
 /**
- * Reusable selector for stream prefill and suggested download selection.
+ * Picks the source to download for each episode of a batch download.
  *
- * Requirements:
- * - Eligibility limited to download-capable streams.
- * - Normal case: smallest known size at-or-above preferred resolution; known size beats unknown; tie: input order.
- * - Fallback: highest known lower resolution then smallest size (known size beats unknown; tie: input order).
- * - If no known resolution: smallest size, then first in input order.
- * - [StreamSelectionResult.meetsPreference] is true only for the normal case (chosen resolution >= preferred).
+ * Only download-capable streams are considered. Among them it prefers, in order:
+ * 1. the smallest stream at or above the preferred resolution;
+ * 2. otherwise the highest lower resolution, smallest first;
+ * 3. otherwise, when no resolution is known, the smallest stream.
+ * A known size beats an unknown one, and ties keep the input order.
  */
 internal object StreamSourcePrefillSelector {
 
     private const val MIN_VALID_FILE_SIZE_BYTES = 10_000_000L
     private const val MAX_VALID_FILE_SIZE_BYTES = 250_000_000_000L
 
-    /** Picks the source to download; debrid links count as eligible because they are resolved at queue time. */
+    private val smallestFirst = compareBy<Candidate> { it.size == null }
+        .thenBy { it.size ?: Long.MAX_VALUE }
+        .thenBy { it.index }
+
+    /** Debrid links count as eligible because they are resolved when the download is queued. */
     fun selectForBatch(
         streams: List<StreamItem>,
         preferredResolution: DownloadPreferredResolution = DownloadPreferredResolution.DEFAULT,
     ): StreamSelectionResult? {
-        val eligible = streams.filter { stream ->
-            val direct = stream.playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }
-            if (direct != null) {
-                direct.isSupportedDownloadUrl()
-            } else {
-                stream.isResolverDependent() || DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)
+        val candidates = streams
+            .filter(::isDownloadCapable)
+            .mapIndexed { index, stream ->
+                Candidate(
+                    index = index,
+                    stream = stream,
+                    facts = DebridStreamMetadata.facts(stream, DebridStreamPreferences()),
+                    size = stream.clientResolve?.stream?.raw?.size?.takeIf(::isPlausibleFileSize)
+                        ?: stream.behaviorHints.videoSize?.takeIf(::isPlausibleFileSize),
+                )
             }
-        }
-        if (eligible.isEmpty()) return null
 
-        val candidates = eligible.mapIndexed { index, stream ->
-            IndexedCandidate(
-                index = index,
-                stream = stream,
-                facts = DebridStreamMetadata.facts(stream, DebridStreamPreferences()),
-                fileSizeBytes = stream.clientResolve?.stream?.raw?.size
-                    ?.takeIf(::isPlausibleFileSize)
-                    ?: stream.behaviorHints.videoSize?.takeIf(::isPlausibleFileSize),
-            )
-        }
-
-        // 1. Normal case: smallest known size at-or-above preferred resolution
-        val atOrAbove = candidates.filter { it.resolutionValue >= preferredResolution.resolution && it.resolutionValue > 0 }
-        if (atOrAbove.isNotEmpty()) {
-            val selected = atOrAbove.minWithOrNull(
-                compareBy<IndexedCandidate> { it.size == null }
-                    .thenBy { it.size ?: Long.MAX_VALUE }
-                    .thenBy { it.index },
-            ) ?: return null
-            return StreamSelectionResult(
-                stream = selected.stream,
-                facts = selected.facts,
-                meetsPreference = true,
-            )
-        }
-
-        // 2. Fallback: highest known lower resolution then smallest size
-        val lowerResolutions = candidates.filter { it.resolutionValue in 1 until preferredResolution.resolution }
-        if (lowerResolutions.isNotEmpty()) {
-            val selected = lowerResolutions.minWithOrNull(
-                compareByDescending<IndexedCandidate> { it.resolutionValue }
-                    .thenBy { it.size == null }
-                    .thenBy { it.size ?: Long.MAX_VALUE }
-                    .thenBy { it.index },
-            ) ?: return null
-            return StreamSelectionResult(
-                stream = selected.stream,
-                facts = selected.facts,
-                meetsPreference = false,
-            )
-        }
-
-        // 3. No known resolution: smallest size, then first in input order
-        val selected = candidates.minWithOrNull(
-            compareBy<IndexedCandidate> { it.size == null }
-                .thenBy { it.size ?: Long.MAX_VALUE }
-                .thenBy { it.index },
-        ) ?: return null
-
-        return StreamSelectionResult(
-            stream = selected.stream,
-            facts = selected.facts,
-            meetsPreference = false,
-        )
+        val preferred = preferredResolution.resolution
+        val selected = candidates.filter { it.resolution >= preferred }.minWithOrNull(smallestFirst)
+            ?: candidates.filter { it.resolution in 1 until preferred }
+                .minWithOrNull(compareByDescending<Candidate> { it.resolution }.then(smallestFirst))
+            ?: candidates.minWithOrNull(smallestFirst)
+            ?: return null
+        return StreamSelectionResult(stream = selected.stream, facts = selected.facts)
     }
 
-    private data class IndexedCandidate(
+    private fun isDownloadCapable(stream: StreamItem): Boolean {
+        val directUrl = stream.playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }
+        return directUrl?.isSupportedDownloadUrl()
+            ?: (stream.isResolverDependent() || DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream))
+    }
+
+    private data class Candidate(
         val index: Int,
         val stream: StreamItem,
         val facts: DebridStreamFacts,
-        val fileSizeBytes: Long?,
+        val size: Long?,
     ) {
-        val resolutionValue: Int get() = facts.resolution.value
-        val size: Long? get() = fileSizeBytes
+        val resolution: Int get() = facts.resolution.value
     }
 
     private fun isPlausibleFileSize(size: Long): Boolean =

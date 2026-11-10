@@ -41,6 +41,13 @@ internal data class StreamSourceTargets(
     val pluginScraperCount: Int,
 )
 
+/** One place streams can come from, and how to load its group. */
+private class StreamSource(
+    val addonName: String,
+    val addonId: String,
+    val load: suspend () -> AddonStreamGroup,
+)
+
 internal object StreamSourceLoader {
     private val log = Logger.withTag("StreamSourceLoader")
 
@@ -248,17 +255,21 @@ internal object StreamSourceLoader {
         error = error.message,
     )
 
+    /**
+     * Loads every source's streams for one title and returns them in display order. Sources that
+     * haven't answered within [timeoutMs] are left out.
+     */
     suspend fun loadStreams(
         type: String,
         videoId: String,
-        season: Int? = null,
-        episode: Int? = null,
-        embeddedStreams: List<StreamItem> = emptyList(),
-        forceRefresh: Boolean = false,
-        timeoutMs: Long = 75_000L,
+        season: Int?,
+        episode: Int?,
+        embeddedStreams: List<StreamItem>,
+        timeoutMs: Long,
     ): List<StreamItem> {
         val streamBadgeRules = StreamBadgeSettingsRepository.snapshot()
         val debridSettings = DebridSettingsRepository.snapshot()
+        fun present(group: AddonStreamGroup) = presentStreamGroup(group, streamBadgeRules, debridSettings)
 
         if (embeddedStreams.isNotEmpty()) {
             val group = AddonStreamGroup(
@@ -267,98 +278,44 @@ internal object StreamSourceLoader {
                 streams = embeddedStreams,
                 isLoading = false,
             )
-            val presented = presentStreamGroup(group, streamBadgeRules, debridSettings)
-            return presented.streams
+            return present(group).streams
         }
 
-        val targets = resolveTargets(
-            type = type,
-            videoId = videoId,
-            season = season,
-            episode = episode,
-            forceRefresh = forceRefresh,
-        )
+        val targets = resolveTargets(type = type, videoId = videoId, season = season, episode = episode)
+        val sources =
+            targets.streamAddons.map { addon ->
+                StreamSource(addon.addonName, addon.addonId) {
+                    val group = fetchAddonGroup(addon, type, videoId, forceRefresh = false)
+                    checkDebridCache(group, targets.installedAddonIds)
+                }
+            } + targets.pluginProviderGroups.map { providerGroup ->
+                StreamSource(providerGroup.addonName, providerGroup.addonId) {
+                    loadPluginProviderGroup(providerGroup, type, videoId, season, episode, streamBadgeRules)
+                }
+            } + targets.serverSources.map { source ->
+                StreamSource(source.addonName, source.addonId) { source.load() }
+            }
+        if (sources.isEmpty()) return emptyList()
 
-        val totalSources = targets.streamAddons.size + targets.pluginProviderGroups.size + targets.serverSources.size
-        if (totalSources == 0) {
-            return emptyList()
-        }
-
-        val resultsChannel = Channel<Pair<Int, AddonStreamGroup>>(Channel.UNLIMITED)
+        val results = Channel<Pair<Int, AddonStreamGroup>>(Channel.UNLIMITED)
         val arrivedByIndex = mutableMapOf<Int, AddonStreamGroup>()
-
         try {
             supervisorScope {
-                var targetIndex = 0
-
-                targets.streamAddons.forEach { addon ->
-                    val index = targetIndex++
+                sources.forEachIndexed { index, source ->
                     launch {
-                        try {
-                            val rawGroup = fetchAddonGroup(addon, type, videoId, forceRefresh)
-                            val cachedGroup = checkDebridCache(rawGroup, targets.installedAddonIds)
-                            resultsChannel.send(index to presentStreamGroup(cachedGroup, streamBadgeRules, debridSettings))
+                        val group = try {
+                            present(source.load())
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            resultsChannel.send(index to failedGroup(addon.addonName, addon.addonId, e))
+                            failedGroup(source.addonName, source.addonId, e)
                         }
+                        results.send(index to group)
                     }
                 }
-
-                targets.pluginProviderGroups.forEach { providerGroup ->
-                    val index = targetIndex++
-                    launch {
-                        try {
-                            val scraperResults = providerGroup.scrapers.map { scraper ->
-                                async {
-                                    executePluginScraper(
-                                        scraper = scraper,
-                                        providerGroup = providerGroup,
-                                        type = type,
-                                        videoId = videoId,
-                                        season = season,
-                                        episode = episode,
-                                        includeScraperNameInSubtitle = false,
-                                    )
-                                }
-                            }.awaitAll()
-
-                            val allPluginStreams = scraperResults.flatMap { it.streams }
-                            val mergedStreams = StreamBadgePresentation.applyToStreams(allPluginStreams, streamBadgeRules)
-                                .sortedForGroupedDisplay()
-                            val group = AddonStreamGroup(
-                                addonName = providerGroup.addonName,
-                                addonId = providerGroup.addonId,
-                                streams = mergedStreams,
-                                isLoading = false,
-                            )
-                            resultsChannel.send(index to presentStreamGroup(group, streamBadgeRules, debridSettings))
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Throwable) {
-                            resultsChannel.send(index to failedGroup(providerGroup.addonName, providerGroup.addonId, e))
-                        }
-                    }
-                }
-
-                targets.serverSources.forEach { source ->
-                    val index = targetIndex++
-                    launch {
-                        try {
-                            val rawGroup = source.load()
-                            resultsChannel.send(index to presentStreamGroup(rawGroup, streamBadgeRules, debridSettings))
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Throwable) {
-                            resultsChannel.send(index to failedGroup(source.addonName, source.addonId, e))
-                        }
-                    }
-                }
-
                 withTimeoutOrNull(timeoutMs) {
-                    repeat(totalSources) {
-                        val (index, group) = resultsChannel.receive()
+                    repeat(sources.size) {
+                        val (index, group) = results.receive()
                         arrivedByIndex[index] = group
                     }
                 }
@@ -370,14 +327,34 @@ internal object StreamSourceLoader {
             log.w(e) { "Stream loading error: ${e.message}" }
         }
 
-        val arrivedGroups = (0 until totalSources).mapNotNull { arrivedByIndex[it] }
-        if (arrivedGroups.isEmpty()) return emptyList()
-
-        val orderedGroups = StreamAutoPlaySelector.orderAddonStreams(
+        val arrivedGroups = sources.indices.mapNotNull { arrivedByIndex[it] }
+        return StreamAutoPlaySelector.orderAddonStreams(
             groups = arrivedGroups,
             installedOrder = targets.installedAddonOrder,
             preferredGroupIds = targets.preferredGroupIds,
+        ).flatMap { it.streams }
+    }
+
+    /** Runs every scraper of [providerGroup] and merges their streams into one group. */
+    private suspend fun loadPluginProviderGroup(
+        providerGroup: PluginProviderGroup,
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+        streamBadgeRules: StreamBadgeRules,
+    ): AddonStreamGroup = supervisorScope {
+        val streams = providerGroup.scrapers
+            .map { scraper ->
+                async { executePluginScraper(scraper, providerGroup, type, videoId, season, episode) }
+            }
+            .awaitAll()
+            .flatMap { it.streams }
+        AddonStreamGroup(
+            addonName = providerGroup.addonName,
+            addonId = providerGroup.addonId,
+            streams = StreamBadgePresentation.applyToStreams(streams, streamBadgeRules).sortedForGroupedDisplay(),
+            isLoading = false,
         )
-        return orderedGroups.flatMap { it.streams }
     }
 }

@@ -18,9 +18,6 @@ import nuvio.composeapp.generated.resources.settings_content_discovery_section_s
 import nuvio.composeapp.generated.resources.settings_content_discovery_section_search
 import nuvio.composeapp.generated.resources.settings_content_discovery_recent_searches
 import nuvio.composeapp.generated.resources.settings_content_discovery_recent_searches_description
-import nuvio.composeapp.generated.resources.compose_settings_root_downloads_title
-import nuvio.composeapp.generated.resources.compose_settings_root_downloads_description
-import nuvio.composeapp.generated.resources.compose_settings_root_downloads_description_appstore
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.contentDiscoveryContent(
@@ -29,7 +26,6 @@ internal fun LazyListScope.contentDiscoveryContent(
     onAddonsClick: () -> Unit,
     onPluginsClick: () -> Unit,
     onMediaServersClick: () -> Unit,
-    onDownloadsClick: (() -> Unit)? = null,
 ) {
     item {
         val recentSearchesEnabled by remember {
@@ -83,20 +79,6 @@ internal fun LazyListScope.contentDiscoveryContent(
                         description = stringResource(Res.string.settings_content_discovery_plugins_description),
                         isTablet = isTablet,
                         onClick = onPluginsClick,
-                    )
-                }
-                if (onDownloadsClick != null) {
-                    SettingsNavigationRow(
-                        title = stringResource(Res.string.compose_settings_root_downloads_title),
-                        description = stringResource(
-                            if (AppFeaturePolicy.personalMediaAddonCopyEnabled) {
-                                Res.string.compose_settings_root_downloads_description_appstore
-                            } else {
-                                Res.string.compose_settings_root_downloads_description
-                            },
-                        ),
-                        isTablet = isTablet,
-                        onClick = onDownloadsClick,
                     )
                 }
             }

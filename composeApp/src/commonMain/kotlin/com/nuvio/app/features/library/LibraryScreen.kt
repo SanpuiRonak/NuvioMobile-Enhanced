@@ -62,24 +62,19 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.ViewAgenda
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.downloads.ActiveAndQueuedDownloadsDialog
 import com.nuvio.app.features.downloads.DownloadItem
-import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsPlatformDownloader
 import com.nuvio.app.features.downloads.DownloadsRepository
-import com.nuvio.app.features.downloads.formatBytes
-import com.nuvio.app.features.settings.DownloadsSettingsScreen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -213,7 +208,6 @@ fun LibraryScreen(
     onPreviewClick: ((MetaPreview) -> Unit)? = null,
     onPreviewLongClick: ((MetaPreview) -> Unit)? = null,
     onDownloadsClick: (() -> Unit)? = null,
-    onOpenDownloadsSettings: (() -> Unit)? = null,
     onOpenDownload: ((DownloadItem) -> Unit)? = null,
     onOpenShowDetails: ((showId: String, title: String) -> Unit)? = null,
 ) {
@@ -249,7 +243,6 @@ fun LibraryScreen(
     }.collectAsStateWithLifecycle()
     var downloadPendingDeletionIds by remember { mutableStateOf<List<String>?>(null) }
     var showActiveQueuedDialog by rememberSaveable { mutableStateOf(false) }
-    var showDownloadsSettings by rememberSaveable { mutableStateOf(false) }
     val openDownloadsDirectoryFailedText = stringResource(Res.string.downloads_open_directory_failed)
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     val unknownReleaseLabel = stringResource(Res.string.generic_unknown)
@@ -260,12 +253,9 @@ fun LibraryScreen(
         ServerRepository.uiState
     }.collectAsStateWithLifecycle()
     val hasServers = serversUiState.connections.any { it.enabled }
-    var sourceModeName by rememberSaveable(displaySettings.viewMode) { mutableStateOf(displaySettings.viewMode) }
-    val sourceMode = remember(sourceModeName, hasServers) {
-        runCatching { LibraryViewMode.valueOf(sourceModeName) }.getOrDefault(LibraryViewMode.Saved)
-            .takeUnless { it == LibraryViewMode.Servers && !hasServers }
-            ?: LibraryViewMode.Saved
-    }
+    val sourceMode = displaySettings.viewMode
+        .takeUnless { it == LibraryViewMode.Servers && !hasServers }
+        ?: LibraryViewMode.Saved
     var showReleaseCalendar by rememberSaveable { mutableStateOf(false) }
     val releaseCalendarCacheState by LibraryReleaseCalendarCache.state.collectAsStateWithLifecycle()
     val releaseCalendarCacheKey = remember(uiState.items) {
@@ -317,12 +307,13 @@ fun LibraryScreen(
                 savedSections = uiState.sections,
                 savedItems = uiState.items,
                 downloadItems = downloadsUiState.items,
+                offlineMetadataFor = DownloadsRepository::getShowMetadata,
             )
         } else {
             uiState.sections
         }
     }
-    val orderListKeys = if (sourceMode != LibraryViewMode.Saved && sourceMode != LibraryViewMode.Downloaded) emptyList() else {
+    val orderListKeys = if (!sourceMode.showsLibrarySections) emptyList() else {
         if (displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) currentModeSections.map { it.type }
         else listOfNotNull(currentModeSections.firstOrNull { it.type == selectedLibrarySectionKey }?.type
             ?: currentModeSections.firstOrNull()?.type)
@@ -330,7 +321,7 @@ fun LibraryScreen(
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
     val sortedSections = remember(currentModeSections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
-        if ((sourceMode == LibraryViewMode.Saved || sourceMode == LibraryViewMode.Downloaded) && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
+        if (sourceMode.showsLibrarySections && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
                 sections = currentModeSections,
                 selected = visibleSortOption,
@@ -350,7 +341,7 @@ fun LibraryScreen(
         sourceMode,
         providerOrders,
     ) {
-        if ((sourceMode == LibraryViewMode.Saved || sourceMode == LibraryViewMode.Downloaded) && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
+        if (sourceMode.showsLibrarySections && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
             buildLibraryVerticalProjection(
                 sections = currentModeSections,
                 sourceMode = uiState.sourceMode,
@@ -429,7 +420,7 @@ fun LibraryScreen(
     }
 
     LaunchedEffect(sourceMode, currentModeItems) {
-        if (sourceMode != LibraryViewMode.Saved && sourceMode != LibraryViewMode.Downloaded) return@LaunchedEffect
+        if (!sourceMode.showsLibrarySections) return@LaunchedEffect
         val missingItems = currentModeItems
             .filter { item -> item.releaseInfo.isNullOrBlank() }
             .distinctBy(LibraryItem::libraryReleaseInfoKey)
@@ -481,7 +472,7 @@ fun LibraryScreen(
 
     val disintegration = remember { LibraryDisintegrationHolder() }
     val librarySectionsDisplay = if (
-        (sourceMode == LibraryViewMode.Saved || sourceMode == LibraryViewMode.Downloaded) &&
+        sourceMode.showsLibrarySections &&
         displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL &&
         (uiState.isLoaded || sourceMode == LibraryViewMode.Downloaded) &&
         sortedSections.isNotEmpty()
@@ -495,13 +486,6 @@ fun LibraryScreen(
     } else {
         disintegration.reset()
         emptyList()
-    }
-
-    if (showDownloadsSettings) {
-        DownloadsSettingsScreen(
-            onBack = { showDownloadsSettings = false },
-        )
-        return
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -530,13 +514,10 @@ fun LibraryScreen(
                 LibrarySourceSwitch(
                     selectedMode = sourceMode,
                     showServers = hasServers,
-                    onModeSelected = { mode ->
-                        sourceModeName = mode.name
-                        LibraryDisplaySettingsRepository.setViewMode(mode.name)
-                    },
+                    onModeSelected = LibraryDisplaySettingsRepository::setViewMode,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 ) {
-                    if (sourceMode == LibraryViewMode.Saved || sourceMode == LibraryViewMode.Downloaded) {
+                    if (sourceMode.showsLibrarySections) {
                         if (sourceMode == LibraryViewMode.Saved) {
                             LibraryListManagementButton()
                         }
@@ -587,16 +568,18 @@ fun LibraryScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(
-                            onClick = { onOpenDownloadsSettings?.invoke() ?: run { showDownloadsSettings = true } },
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Settings,
-                                contentDescription = stringResource(Res.string.compose_settings_root_downloads_title),
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        if (downloadsUiState.activeItems.isNotEmpty()) {
+                            IconButton(
+                                onClick = { showActiveQueuedDialog = true },
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Schedule,
+                                    contentDescription = stringResource(Res.string.downloads_show_active_queued),
+                                    modifier = Modifier.size(22.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                     if (sourceMode == LibraryViewMode.Saved) {
@@ -656,7 +639,7 @@ fun LibraryScreen(
 
             val effectivePosterClick: ((LibraryItem) -> Unit)? = if (sourceMode == LibraryViewMode.Downloaded) {
                 { item ->
-                    if (item.type == "series" || item.type == "tv") {
+                    if (item.isSeries) {
                         onOpenShowDetails?.invoke(item.id, item.name) ?: onPosterClick?.invoke(item)
                     } else {
                         onPosterClick?.invoke(item)
@@ -679,31 +662,21 @@ fun LibraryScreen(
                 onPosterLongClick
             }
 
-            val activeDownloadItemFor: (LibraryItem) -> ActiveDownloadShelfItem? = remember(sourceMode, downloadsUiState.items) {
-                { item: LibraryItem ->
-                    if (sourceMode == LibraryViewMode.Downloaded) {
-                        getActiveDownloadShelfItem(item, downloadsUiState.items)
-                    } else {
-                        null
-                    }
-                }
-            }
-
-            val onActiveDownloadPauseResume: (ActiveDownloadShelfItem) -> Unit = { activeItem ->
-                if (activeItem.isShow) {
-                    if (activeItem.status == DownloadStatus.Downloading || activeItem.status == DownloadStatus.Queued) {
-                        DownloadsRepository.pauseSeriesDownloads(activeItem.parentMetaId)
-                    } else if (activeItem.status == DownloadStatus.Paused) {
-                        DownloadsRepository.resumeSeriesDownloads(activeItem.parentMetaId)
+            val activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? =
+                if (sourceMode == LibraryViewMode.Downloaded) {
+                    remember(downloadsUiState.items) {
+                        { item: LibraryItem -> activeDownloadShelfItem(item, downloadsUiState.items) }
                     }
                 } else {
-                    activeItem.rawItem?.let { raw ->
-                        if (raw.status == DownloadStatus.Downloading || raw.status == DownloadStatus.Queued) {
-                            DownloadsRepository.pauseDownload(raw.id)
-                        } else if (raw.status == DownloadStatus.Paused) {
-                            DownloadsRepository.resumeDownload(raw.id)
-                        }
-                    }
+                    null
+                }
+
+            val onActiveDownloadTogglePause: (ActiveDownloadShelfItem) -> Unit = { activeItem ->
+                val movie = activeItem.movieDownload
+                if (movie != null) {
+                    DownloadsRepository.togglePause(movie.id)
+                } else {
+                    DownloadsRepository.toggleShowPause(activeItem.contentId)
                 }
             }
 
@@ -805,35 +778,19 @@ fun LibraryScreen(
 
                     currentModeSections.isEmpty() -> {
                         item {
-                            if (sourceMode == LibraryViewMode.Downloaded) {
-                                HomeEmptyStateCard(
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                    title = stringResource(Res.string.downloads_empty_library_title),
-                                    message = stringResource(Res.string.downloads_empty_library_message),
-                                )
-                            } else {
-                                HomeEmptyStateCard(
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                    title = when (uiState.sourceMode) {
-                                        LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_title)
-                                        LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_title)
-                                        LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_title)
-                                        LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_title)
-                                        LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_title)
-                                        LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_title)
-                                        LibrarySourceMode.PUBLICMETADB -> stringResource(Res.string.library_publicmetadb_empty_title)
-                                    },
-                                    message = when (uiState.sourceMode) {
-                                        LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_message)
-                                        LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_message)
-                                        LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_message)
-                                        LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_message)
-                                        LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_message)
-                                        LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_message)
-                                        LibrarySourceMode.PUBLICMETADB -> stringResource(Res.string.library_publicmetadb_empty_message)
-                                    },
-                                )
-                            }
+                            HomeEmptyStateCard(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                title = if (sourceMode == LibraryViewMode.Downloaded) {
+                                    stringResource(Res.string.downloads_empty_library_title)
+                                } else {
+                                    libraryEmptyTitle(uiState.sourceMode)
+                                },
+                                message = if (sourceMode == LibraryViewMode.Downloaded) {
+                                    stringResource(Res.string.downloads_empty_library_message)
+                                } else {
+                                    libraryEmptyMessage(uiState.sourceMode)
+                                },
+                            )
                         }
                     }
 
@@ -879,7 +836,7 @@ fun LibraryScreen(
                                 onPosterLongClick = effectivePosterLongClick,
                                 onDisintegrated = disintegration::onExited,
                                 activeDownloadItemFor = activeDownloadItemFor,
-                                onActiveDownloadPauseResume = onActiveDownloadPauseResume,
+                                onActiveDownloadTogglePause = onActiveDownloadTogglePause,
                             )
                             LibraryLayoutMode.VERTICAL -> libraryVerticalContent(
                                 projection = verticalProjection,
@@ -891,7 +848,7 @@ fun LibraryScreen(
                                 onPosterClick = effectivePosterClick,
                                 onPosterLongClick = effectivePosterLongClick,
                                 activeDownloadItemFor = activeDownloadItemFor,
-                                onActiveDownloadPauseResume = onActiveDownloadPauseResume,
+                                onActiveDownloadTogglePause = onActiveDownloadTogglePause,
                             )
                         }
                     }
@@ -2207,7 +2164,7 @@ private fun LazyListScope.librarySections(
     onPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)?,
     onDisintegrated: (String) -> Unit,
     activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? = null,
-    onActiveDownloadPauseResume: ((ActiveDownloadShelfItem) -> Unit)? = null,
+    onActiveDownloadTogglePause: ((ActiveDownloadShelfItem) -> Unit)? = null,
 ) {
     items(
         items = displaySections,
@@ -2238,16 +2195,11 @@ private fun LazyListScope.librarySections(
                         item = activeDownload,
                         posterPattern = posterPattern,
                         onClick = { if (!entry.exiting) onPosterClick?.invoke(item) },
-                        onPauseResume = onActiveDownloadPauseResume?.let { callback -> { callback(activeDownload) } },
-                        onDelete = if (!entry.exiting && entrySource != null) {
-                            { onPosterLongClick?.invoke(item, entrySource) }
-                        } else null,
+                        onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(activeDownload) } },
                     )
                 } else {
                     val posterItem = remember(item, posterPattern, releaseInfoFor) {
-                        item.toMetaPreview()
-                            .copy(releaseInfo = releaseInfoFor(item))
-                            .let { if (posterPattern.isNotBlank()) it.withCustomPosterUrl(posterPattern) else it }
+                        item.toPosterPreview(releaseInfoFor, posterPattern)
                     }
                     HomePosterCard(
                         item = posterItem,
@@ -3387,12 +3339,6 @@ private fun isoEpochDay(date: String): Long {
     return era * 146_097L + dayOfEra - 719_468L
 }
 
-private enum class LibraryViewMode {
-    Saved,
-    Downloaded,
-    Cloud,
-    Servers,
-}
 
 private const val LIBRARY_SECTION_PREVIEW_LIMIT = 18
 
@@ -3644,4 +3590,26 @@ internal fun libraryGridColumnCount(isLandscape: Boolean, isTablet: Boolean): In
     isTablet -> 5
     isLandscape -> 6
     else -> 3
+}
+
+@Composable
+private fun libraryEmptyTitle(sourceMode: LibrarySourceMode): String = when (sourceMode) {
+    LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_title)
+    LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_title)
+    LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_title)
+    LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_title)
+    LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_title)
+    LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_title)
+    LibrarySourceMode.PUBLICMETADB -> stringResource(Res.string.library_publicmetadb_empty_title)
+}
+
+@Composable
+private fun libraryEmptyMessage(sourceMode: LibrarySourceMode): String = when (sourceMode) {
+    LibrarySourceMode.LOCAL -> stringResource(Res.string.library_empty_message)
+    LibrarySourceMode.TRAKT -> stringResource(Res.string.library_trakt_empty_message)
+    LibrarySourceMode.SIMKL -> stringResource(Res.string.library_simkl_empty_message)
+    LibrarySourceMode.MDBLIST -> stringResource(Res.string.library_mdblist_empty_message)
+    LibrarySourceMode.ANILIST -> stringResource(Res.string.library_anilist_empty_message)
+    LibrarySourceMode.WETRAKR -> stringResource(Res.string.library_wetrakr_empty_message)
+    LibrarySourceMode.PUBLICMETADB -> stringResource(Res.string.library_publicmetadb_empty_message)
 }

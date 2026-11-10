@@ -121,7 +121,7 @@ internal fun LazyListScope.libraryVerticalContent(
     onPosterClick: ((LibraryItem) -> Unit)?,
     onPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)?,
     activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? = null,
-    onActiveDownloadPauseResume: ((ActiveDownloadShelfItem) -> Unit)? = null,
+    onActiveDownloadTogglePause: ((ActiveDownloadShelfItem) -> Unit)? = null,
 ) {
     items(
         items = projection.entries.chunked(columns),
@@ -131,10 +131,10 @@ internal fun LazyListScope.libraryVerticalContent(
         },
         contentType = { "library_poster_row" },
     ) { rowEntries ->
-        val hasActiveDownloads = remember(rowEntries) {
-            rowEntries.any { activeDownloadItemFor?.invoke(it.item) != null }
-        }
-        if (hasActiveDownloads && activeDownloadItemFor != null) {
+        // Not remembered: whether a row has an active download changes as downloads progress,
+        // while the row's entries stay the same.
+        val activeDownloads = rowEntries.map { activeDownloadItemFor?.invoke(it.item) }
+        if (activeDownloads.any { it != null }) {
             Row(
                 modifier = libraryContentTransitionModifier()
                     .padding(horizontal = 16.dp)
@@ -142,25 +142,22 @@ internal fun LazyListScope.libraryVerticalContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top,
             ) {
-                rowEntries.forEach { entry ->
+                rowEntries.forEachIndexed { index, entry ->
                     val item = entry.item
-                    val activeDownload = activeDownloadItemFor(item)
+                    val activeDownload = activeDownloads[index]
                     if (activeDownload != null) {
                         ActiveDownloadPosterCard(
                             item = activeDownload,
                             posterPattern = posterPattern,
                             onClick = { onPosterClick?.invoke(item) },
-                            onPauseResume = onActiveDownloadPauseResume?.let { callback -> { callback(activeDownload) } },
-                            onDelete = { onPosterLongClick?.invoke(item, entry.section) },
+                            onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(activeDownload) } },
                             modifier = Modifier.weight(1f),
                             fillMaxWidth = true,
                         )
                     } else {
                         val posterCardStyle = rememberPosterCardStyleUiState()
                         val preview = remember(item, posterPattern, releaseInfoFor) {
-                            item.toMetaPreview()
-                                .copy(releaseInfo = releaseInfoFor(item))
-                                .let { if (posterPattern.isNotBlank()) it.withCustomPosterUrl(posterPattern) else it }
+                            item.toPosterPreview(releaseInfoFor, posterPattern)
                         }
                         PosterGridTile(
                             item = preview,
@@ -184,9 +181,7 @@ internal fun LazyListScope.libraryVerticalContent(
         } else {
             val resolvedItems = remember(rowEntries, posterPattern, releaseInfoFor) {
                 rowEntries.map { entry ->
-                    entry.item.toMetaPreview()
-                        .copy(releaseInfo = releaseInfoFor(entry.item))
-                        .let { if (posterPattern.isNotBlank()) it.withCustomPosterUrl(posterPattern) else it }
+                    entry.item.toPosterPreview(releaseInfoFor, posterPattern)
                 }
             }
             PosterGridRow(
@@ -244,3 +239,11 @@ private fun librarySortOptionLabel(option: LibrarySortOption): String =
 
 private fun List<LibraryVerticalEntry>.findEntry(preview: MetaPreview): LibraryVerticalEntry? =
     firstOrNull { entry -> entry.item.id == preview.id && entry.item.type == preview.type }
+
+/** The poster preview for [this] item, with its release info and the user's custom poster pattern. */
+internal fun LibraryItem.toPosterPreview(
+    releaseInfoFor: (LibraryItem) -> String,
+    posterPattern: String,
+): MetaPreview = toMetaPreview()
+    .copy(releaseInfo = releaseInfoFor(this))
+    .let { if (posterPattern.isNotBlank()) it.withCustomPosterUrl(posterPattern) else it }

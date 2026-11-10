@@ -472,7 +472,6 @@
     <string name="compose_player_panel_streams">Streams</string>
     <string name="compose_player_playback_error">Playback error</string>
     <string name="compose_player_playing">Playing</string>
-    <string name="downloads_badge_paused">Paused</string>
     <string name="compose_player_fetch_subtitles">Tap to fetch subtitles</string>
     <string name="compose_player_go_back">Go back</string>
     <string name="compose_player_reload">Reload</string>
@@ -3114,10 +3113,12 @@
     <string name="settings_glass_ui_style">Glass style</string>
     <string name="settings_glass_ui_style_dark">Dark</string>
     <string name="settings_glass_ui_style_balanced">Balanced</string>
+    <string name="settings_glass_ui_style_vivid">Vivid</string>
     <string name="season_download_finding_source">Finding source…</string>
     <string name="season_download_already_downloaded">Already downloaded</string>
     <string name="season_download_no_source_found">No stream found</string>
     <string name="downloads_status_queued">Queued</string>
+    <string name="downloads_badge_paused">Paused</string>
     <string name="downloads_summary_downloading">%1$d downloading</string>
     <string name="downloads_summary_queued">%1$d queued</string>
     <string name="downloads_summary_paused">%1$d paused</string>
@@ -3128,9 +3129,7 @@
     <string name="downloads_selected_count">%1$d selected</string>
     <string name="downloads_action_pause_count">Pause (%1$d)</string>
     <string name="downloads_action_resume_count">Resume (%1$d)</string>
-    <string name="downloads_action_retry_count">Retry (%1$d)</string>
     <string name="downloads_action_deselect">Deselect</string>
-    <string name="downloads_action_retry_failed">Retry Failed</string>
     <string name="downloads_empty_active">No active or queued downloads</string>
     <string name="downloads_show_fallback_title">Show</string>
     <string name="downloads_delete_selected_confirm">Delete %1$d selected downloads?</string>
@@ -3142,6 +3141,8 @@
     <string name="downloads_series_size_stats">Total: %1$s • Avg: %2$s • Median: %3$s</string>
     <string name="downloads_series_size_total">Total: %1$s</string>
     <string name="downloads_storage_title">Device Storage</string>
+    <string name="downloads_storage_free_of_total">%1$s free of %2$s</string>
+    <string name="downloads_storage_legend_value">%1$s: %2$s</string>
     <string name="downloads_storage_app">Nuvio Downloads</string>
     <string name="downloads_storage_other">Other Apps &amp; System</string>
     <string name="downloads_storage_free">Free Space</string>

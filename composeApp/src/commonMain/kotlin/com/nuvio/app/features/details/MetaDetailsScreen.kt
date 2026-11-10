@@ -111,11 +111,11 @@ import com.kyant.backdrop.Backdrop
 import com.nuvio.app.core.ui.glass.LocalLiquidGlassBackdrop
 import com.nuvio.app.core.ui.glass.nuvioBackdropSource
 import com.nuvio.app.core.ui.glass.rememberNuvioBackdrop
-import com.nuvio.app.features.details.components.SeasonBatchConfirmationDialog
+import com.nuvio.app.features.details.components.BatchDownloadDialog
 import com.nuvio.app.features.details.components.isEpisodeWatchedForNavigator
 import com.nuvio.app.features.downloads.DownloadsSettingsRepository
 import com.nuvio.app.features.downloads.BatchQueueResult
-import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
+import com.nuvio.app.features.downloads.BatchDownloadCoordinator
 import com.nuvio.app.features.details.components.DetailActions
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
@@ -952,7 +952,7 @@ fun MetaDetailsScreen(
                             ?: initialSeasonNumber
                             ?: meta.videos.mapNotNull { it.season }.firstOrNull { it > 0 }
                             ?: 1
-                        SeasonBatchDownloadCoordinator.prepareBatchPlan(
+                        BatchDownloadCoordinator.openPlan(
                             meta = meta,
                             season = targetSeason,
                             watchedKeys = watchedUiState.watchedKeys,
@@ -1685,18 +1685,18 @@ fun MetaDetailsScreen(
                             )
                         }
 
-                        val activeBatchPlan by SeasonBatchDownloadCoordinator.activePlan.collectAsStateWithLifecycle()
+                        val activeBatchPlan by BatchDownloadCoordinator.activePlan.collectAsStateWithLifecycle()
                         activeBatchPlan?.let { plan ->
-                            SeasonBatchConfirmationDialog(
+                            BatchDownloadDialog(
                                 plan = plan,
                                 isEpisodeWatched = { ep ->
                                     meta.isEpisodeWatchedForNavigator(ep, progressByVideoId, watchedUiState.watchedKeys)
                                 },
                                 onDismissRequest = {
-                                    SeasonBatchDownloadCoordinator.cancelBatchPlan()
+                                    BatchDownloadCoordinator.closePlan()
                                 },
                                 onConfirm = {
-                                    val message = when (SeasonBatchDownloadCoordinator.queueConfirmedBatch()) {
+                                    val message = when (BatchDownloadCoordinator.queuePlan()) {
                                         BatchQueueResult.Queued -> Res.string.downloads_enqueue_started
                                         BatchQueueResult.RequiresWifi -> Res.string.downloads_enqueue_requires_wifi
                                         BatchQueueResult.NothingToQueue -> Res.string.season_download_no_source_found

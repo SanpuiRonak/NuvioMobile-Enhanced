@@ -26,41 +26,33 @@ import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.rememberScreenActiveInfiniteFloat
 import com.nuvio.app.core.ui.themePalette
-import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_settings_root_downloads_title
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun LibraryDownloadsButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-) {
+internal fun LibraryDownloadsButton(onClick: () -> Unit) {
     val downloads by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
     }.collectAsStateWithLifecycle()
     val hasUnseenCompleted by DownloadsRepository.hasUnseenCompleted.collectAsStateWithLifecycle()
 
-    IconButton(
-        onClick = onClick,
-        modifier = modifier,
-    ) {
+    IconButton(onClick = onClick) {
         when {
-            downloads.items.any { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued } -> FlowingDownloadIcon()
+            downloads.items.any { it.isActive } -> FlowingDownloadIcon()
             hasUnseenCompleted -> DownloadIcon(
                 modifier = Modifier.gradientMask(MaterialTheme.themePalette.accentBrush()),
                 tint = Color.White,
             )
-            else -> DownloadIcon(tint = tint)
+            else -> DownloadIcon(tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-internal fun FlowingDownloadIcon() {
+private fun FlowingDownloadIcon() {
     val palette = MaterialTheme.themePalette
     val dimAlpha = MaterialTheme.nuvio.opacity.overlayLight
     val colors = palette.accentGradient.takeIf { it.size >= 2 }

@@ -27,8 +27,20 @@ enum class LibrarySortOption {
 data class LibraryDisplaySettingsUiState(
     val layoutMode: LibraryLayoutMode = LibraryLayoutMode.HORIZONTAL,
     val sortOption: LibrarySortOption = LibrarySortOption.DEFAULT,
-    val viewMode: String = "Saved",
+    val viewMode: LibraryViewMode = LibraryViewMode.Saved,
 )
+
+/** Which collection the Library tab shows. */
+enum class LibraryViewMode {
+    Saved,
+    Downloaded,
+    Cloud,
+    Servers;
+
+    /** Saved and Downloaded both show titles in library sections, with the same layout and sorting. */
+    val showsLibrarySections: Boolean
+        get() = this == Saved || this == Downloaded
+}
 
 object LibraryDisplaySettingsRepository {
     private val _uiState = MutableStateFlow(LibraryDisplaySettingsUiState())
@@ -64,7 +76,7 @@ object LibraryDisplaySettingsRepository {
         persist()
     }
 
-    fun setViewMode(viewMode: String) {
+    fun setViewMode(viewMode: LibraryViewMode) {
         ensureLoaded()
         if (_uiState.value.viewMode == viewMode) return
         _uiState.value = _uiState.value.copy(viewMode = viewMode)
@@ -231,7 +243,7 @@ internal fun encodeLibraryDisplaySettings(state: LibraryDisplaySettingsUiState):
         StoredLibraryDisplaySettings(
             layoutMode = state.layoutMode.name,
             sortOption = state.sortOption.name,
-            viewMode = state.viewMode,
+            viewMode = state.viewMode.name,
         ),
     )
 
@@ -250,7 +262,9 @@ internal fun decodeLibraryDisplaySettings(payload: String?): LibraryDisplaySetti
         sortOption = stored?.sortOption
             ?.let { value -> LibrarySortOption.entries.firstOrNull { it.name == value } }
             ?: LibrarySortOption.DEFAULT,
-        viewMode = stored?.viewMode ?: "Saved",
+        viewMode = stored?.viewMode
+            ?.let { value -> LibraryViewMode.entries.firstOrNull { it.name == value } }
+            ?: LibraryViewMode.Saved,
     )
 }
 

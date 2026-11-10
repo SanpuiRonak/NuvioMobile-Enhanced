@@ -104,25 +104,18 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.Schedule
-import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.glass.ambientLiquidGlass
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.DownloadProgressSpinner
+import com.nuvio.app.features.downloads.animatedDownloadProgress
 import com.nuvio.app.features.downloads.formatDownloadBadgeProgress
+import com.nuvio.app.features.downloads.knownProgress
 
 private val log = Logger.withTag("SeriesContent")
 
@@ -207,21 +200,7 @@ fun DetailSeriesContent(
         ?.takeIf { it in groupedEpisodes }
         ?: defaultSeason
 
-    val downloadsUiState by remember {
-        DownloadsRepository.ensureLoaded()
-        DownloadsRepository.uiState
-    }.collectAsStateWithLifecycle()
-
-    val getEpisodeDownloadItem: (MetaVideo) -> DownloadItem? = remember(downloadsUiState.items, meta.id) {
-        { video ->
-            DownloadsRepository.findEpisodeDownload(
-                parentMetaId = meta.id,
-                seasonNumber = video.season,
-                episodeNumber = video.episode,
-                videoId = video.id,
-            )
-        }
-    }
+    val episodeDownloadFor = rememberEpisodeDownloadLookup(meta.id)
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val sizing = seriesContentSizing(maxWidth.value)
@@ -347,7 +326,7 @@ fun DetailSeriesContent(
                                 preferredSeasonNumber = preferredSeasonNumber,
                                 preferredEpisodeNumber = preferredEpisodeNumber,
                             ),
-                            getEpisodeDownloadItem = getEpisodeDownloadItem,
+                            episodeDownloadFor = episodeDownloadFor,
                             onEpisodeClick = onEpisodeClick,
                             onEpisodeLongPress = onEpisodeLongPress,
                         )
@@ -385,7 +364,7 @@ fun DetailSeriesContent(
                                             metaId = meta.id,
                                             episode = episode,
                                         ),
-                                    downloadItem = getEpisodeDownloadItem(episode),
+                                    downloadItem = episodeDownloadFor(episode),
                                     episodeRatingsVisibility = episodeRatingsVisibility,
                                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                                     sizing = sizing,
@@ -477,18 +456,7 @@ internal fun DetailSeriesListEpisode(
             fallbackVideoId = episode.id,
         )
         val userRatingTarget = remember(meta, episode) { meta.episodeUserRatingTarget(episode) }
-        val downloadsUiState by remember {
-            DownloadsRepository.ensureLoaded()
-            DownloadsRepository.uiState
-        }.collectAsStateWithLifecycle()
-        val downloadItem = remember(downloadsUiState.items, meta.id, episode) {
-            DownloadsRepository.findEpisodeDownload(
-                parentMetaId = meta.id,
-                seasonNumber = episode.season,
-                episodeNumber = episode.episode,
-                videoId = episode.id,
-            )
-        }
+        val downloadItem = rememberEpisodeDownloadLookup(meta.id)(episode)
         EpisodeListCard(
             video = episode,
             userRating = rememberUserRating(userRatingTarget),
@@ -908,7 +876,7 @@ private fun EpisodeHorizontalRow(
     preferredEpisodeNumber: Int? = null,
     listState: LazyListState = rememberLazyListState(),
     highlightedKey: String? = null,
-    getEpisodeDownloadItem: ((MetaVideo) -> DownloadItem?)? = null,
+    episodeDownloadFor: ((MetaVideo) -> DownloadItem?)? = null,
     onEpisodeClick: ((MetaVideo) -> Unit)?,
     onEpisodeLongPress: ((MetaVideo) -> Unit)?,
 ) {
@@ -971,7 +939,7 @@ private fun EpisodeHorizontalRow(
                         metaId = parentMetaId,
                         episode = episode,
                     ),
-                downloadItem = getEpisodeDownloadItem?.invoke(episode),
+                downloadItem = episodeDownloadFor?.invoke(episode),
                 episodeRatingsVisibility = episodeRatingsVisibility,
                 blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                 metrics = rowMetrics,
@@ -1346,6 +1314,25 @@ private fun EpisodeCodeBadge(
     }
 }
 
+/** Looks up an episode's download for title [metaId], updating as downloads change. */
+@Composable
+internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> DownloadItem? {
+    val downloadsUiState by remember {
+        DownloadsRepository.ensureLoaded()
+        DownloadsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    return remember(downloadsUiState.items, metaId) {
+        { video ->
+            DownloadsRepository.findEpisodeDownload(
+                parentMetaId = metaId,
+                seasonNumber = video.season,
+                episodeNumber = video.episode,
+                videoId = video.id,
+            )
+        }
+    }
+}
+
 @Composable
 internal fun EpisodeDownloadBadge(
     downloadItem: DownloadItem?,
@@ -1354,12 +1341,8 @@ internal fun EpisodeDownloadBadge(
 ) {
     if (downloadItem == null || downloadItem.status == DownloadStatus.Failed) return
 
-    val hasKnownSize = downloadItem.totalBytes != null && downloadItem.totalBytes > 0L
-    val animatedProgress by animateFloatAsState(
-        targetValue = downloadItem.progressFraction.coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 350),
-        label = "episodeDownloadBadgeProgress",
-    )
+    val hasKnownSize = downloadItem.knownProgress != null
+    val animatedProgress = animatedDownloadProgress(downloadItem.progressFraction)
     val contentColor = MaterialTheme.colorScheme.onPrimary
     val label = when (downloadItem.status) {
         DownloadStatus.Completed -> stringResource(Res.string.provider_downloaded)
@@ -1393,26 +1376,11 @@ internal fun EpisodeDownloadBadge(
                 tint = contentColor,
                 modifier = Modifier.size(10.dp),
             )
-            DownloadStatus.Downloading -> if (hasKnownSize) {
-                CircularProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor,
-                    trackColor = contentColor.copy(alpha = 0.35f),
-                )
-            } else {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor,
-                )
-            }
-            else -> CircularProgressIndicator(
-                modifier = Modifier.size(10.dp),
-                strokeWidth = 2.dp,
-                color = contentColor.copy(alpha = 0.8f),
+            DownloadStatus.Downloading -> DownloadProgressSpinner(
+                progress = animatedProgress.takeIf { hasKnownSize },
+                color = contentColor,
             )
+            else -> DownloadProgressSpinner(progress = null, color = contentColor.copy(alpha = 0.8f))
         }
         Text(
             text = label.uppercase(),

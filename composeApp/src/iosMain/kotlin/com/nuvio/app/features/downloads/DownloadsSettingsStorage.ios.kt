@@ -6,9 +6,6 @@ actual object DownloadsSettingsStorage {
     private const val allowMobileDataDownloadsKey = "allow_mobile_data_downloads"
     private const val showDownloadButtonKey = "show_download_button"
     private const val preferredResolutionKey = "preferred_download_resolution"
-    private const val maxDownloadConcurrencyKey = "max_download_concurrency"
-    private const val maxSeriesEpisodeConcurrencyKey = "max_series_episode_concurrency"
-    private const val maxConcurrentShowsKey = "max_concurrent_shows"
 
     actual fun loadAllowMobileDataDownloads(): Boolean? {
         val defaults = NSUserDefaults.standardUserDefaults
@@ -36,51 +33,19 @@ actual object DownloadsSettingsStorage {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = showDownloadButtonKey)
     }
 
-    actual fun loadPreferredResolution(): DownloadPreferredResolution? {
-        val raw = NSUserDefaults.standardUserDefaults.stringForKey(preferredResolutionKey)
-        return raw?.let(DownloadPreferredResolution::fromStorage)
+    actual fun loadPreferredResolution(): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey(preferredResolutionKey)
+
+    actual fun savePreferredResolution(storageValue: String) {
+        NSUserDefaults.standardUserDefaults.setObject(storageValue, forKey = preferredResolutionKey)
     }
 
-    actual fun savePreferredResolution(resolution: DownloadPreferredResolution) {
-        NSUserDefaults.standardUserDefaults.setObject(resolution.name, forKey = preferredResolutionKey)
-    }
-
-    actual fun loadMaxDownloadConcurrency(): Int? {
+    actual fun loadInt(key: String): Int? {
         val defaults = NSUserDefaults.standardUserDefaults
-        return if (defaults.objectForKey(maxDownloadConcurrencyKey) != null) {
-            defaults.integerForKey(maxDownloadConcurrencyKey).toInt()
-        } else {
-            null
-        }
+        return if (defaults.objectForKey(key) != null) defaults.integerForKey(key).toInt() else null
     }
 
-    actual fun saveMaxDownloadConcurrency(count: Int) {
-        NSUserDefaults.standardUserDefaults.setInteger(count.toLong(), forKey = maxDownloadConcurrencyKey)
-    }
-
-    actual fun loadMaxSeriesEpisodeConcurrency(): Int? {
-        val defaults = NSUserDefaults.standardUserDefaults
-        return if (defaults.objectForKey(maxSeriesEpisodeConcurrencyKey) != null) {
-            defaults.integerForKey(maxSeriesEpisodeConcurrencyKey).toInt()
-        } else {
-            null
-        }
-    }
-
-    actual fun saveMaxSeriesEpisodeConcurrency(count: Int) {
-        NSUserDefaults.standardUserDefaults.setInteger(count.toLong(), forKey = maxSeriesEpisodeConcurrencyKey)
-    }
-
-    actual fun loadMaxConcurrentShows(): Int? {
-        val defaults = NSUserDefaults.standardUserDefaults
-        return if (defaults.objectForKey(maxConcurrentShowsKey) != null) {
-            defaults.integerForKey(maxConcurrentShowsKey).toInt()
-        } else {
-            null
-        }
-    }
-
-    actual fun saveMaxConcurrentShows(count: Int) {
-        NSUserDefaults.standardUserDefaults.setInteger(count.toLong(), forKey = maxConcurrentShowsKey)
+    actual fun saveInt(key: String, value: Int) {
+        NSUserDefaults.standardUserDefaults.setInteger(value.toLong(), forKey = key)
     }
 }

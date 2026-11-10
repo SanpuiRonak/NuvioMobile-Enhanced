@@ -22,19 +22,10 @@ object DownloadsSettingsRepository {
     private val _preferredResolution = MutableStateFlow(DownloadPreferredResolution.DEFAULT)
     val preferredResolution: StateFlow<DownloadPreferredResolution> = _preferredResolution.asStateFlow()
 
-    const val DEFAULT_MAX_DOWNLOAD_CONCURRENCY = 3
-    const val DEFAULT_MAX_SERIES_EPISODE_CONCURRENCY = 1
-    const val DEFAULT_MAX_CONCURRENT_SHOWS = 1
-    const val MAX_CONCURRENCY_LIMIT = 5
-
-    private val _maxDownloadConcurrency = MutableStateFlow(DEFAULT_MAX_DOWNLOAD_CONCURRENCY)
-    val maxDownloadConcurrency: StateFlow<Int> = _maxDownloadConcurrency.asStateFlow()
-
-    private val _maxSeriesEpisodeConcurrency = MutableStateFlow(DEFAULT_MAX_SERIES_EPISODE_CONCURRENCY)
-    val maxSeriesEpisodeConcurrency: StateFlow<Int> = _maxSeriesEpisodeConcurrency.asStateFlow()
-
-    private val _maxConcurrentShows = MutableStateFlow(DEFAULT_MAX_CONCURRENT_SHOWS)
-    val maxConcurrentShows: StateFlow<Int> = _maxConcurrentShows.asStateFlow()
+    private val _concurrencyLimits = MutableStateFlow(
+        DownloadConcurrencyLimit.entries.associateWith { it.defaultValue },
+    )
+    val concurrencyLimits: StateFlow<Map<DownloadConcurrencyLimit, Int>> = _concurrencyLimits.asStateFlow()
 
     private var hasLoaded = false
 
@@ -43,10 +34,10 @@ object DownloadsSettingsRepository {
         hasLoaded = true
         _allowMobileDataDownloads.value = DownloadsSettingsStorage.loadAllowMobileDataDownloads() ?: false
         _showDownloadButton.value = DownloadsSettingsStorage.loadShowDownloadButton() ?: true
-        _preferredResolution.value = DownloadsSettingsStorage.loadPreferredResolution() ?: DownloadPreferredResolution.DEFAULT
-        _maxDownloadConcurrency.value = DownloadsSettingsStorage.loadMaxDownloadConcurrency() ?: DEFAULT_MAX_DOWNLOAD_CONCURRENCY
-        _maxSeriesEpisodeConcurrency.value = DownloadsSettingsStorage.loadMaxSeriesEpisodeConcurrency() ?: DEFAULT_MAX_SERIES_EPISODE_CONCURRENCY
-        _maxConcurrentShows.value = DownloadsSettingsStorage.loadMaxConcurrentShows() ?: DEFAULT_MAX_CONCURRENT_SHOWS
+        _preferredResolution.value = DownloadPreferredResolution.fromStorage(DownloadsSettingsStorage.loadPreferredResolution())
+        _concurrencyLimits.value = DownloadConcurrencyLimit.entries.associateWith { limit ->
+            DownloadsSettingsStorage.loadInt(limit.storageKey)?.let(limit::clamp) ?: limit.defaultValue
+        }
         _downloadLocationUri.value = DownloadsStorage.getDownloadLocationUri()
     }
 
@@ -68,34 +59,20 @@ object DownloadsSettingsRepository {
         ensureLoaded()
         if (_preferredResolution.value == resolution) return
         _preferredResolution.value = resolution
-        DownloadsSettingsStorage.savePreferredResolution(resolution)
+        DownloadsSettingsStorage.savePreferredResolution(resolution.name)
     }
 
-    fun setMaxDownloadConcurrency(count: Int) {
+    fun concurrencyLimit(limit: DownloadConcurrencyLimit): Int {
         ensureLoaded()
-        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
-        if (_maxDownloadConcurrency.value == clamped) return
-        _maxDownloadConcurrency.value = clamped
-        DownloadsSettingsStorage.saveMaxDownloadConcurrency(clamped)
-        DownloadsRepository.advanceDownloadQueue()
+        return _concurrencyLimits.value.getValue(limit)
     }
 
-    fun setMaxSeriesEpisodeConcurrency(count: Int) {
+    fun setConcurrencyLimit(limit: DownloadConcurrencyLimit, count: Int) {
         ensureLoaded()
-        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
-        if (_maxSeriesEpisodeConcurrency.value == clamped) return
-        _maxSeriesEpisodeConcurrency.value = clamped
-        DownloadsSettingsStorage.saveMaxSeriesEpisodeConcurrency(clamped)
-        DownloadsRepository.advanceDownloadQueue()
-    }
-
-    fun setMaxConcurrentShows(count: Int) {
-        ensureLoaded()
-        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
-        if (_maxConcurrentShows.value == clamped) return
-        _maxConcurrentShows.value = clamped
-        DownloadsSettingsStorage.saveMaxConcurrentShows(clamped)
-        DownloadsRepository.advanceDownloadQueue()
+        val clamped = limit.clamp(count)
+        if (_concurrencyLimits.value[limit] == clamped) return
+        _concurrencyLimits.value = _concurrencyLimits.value + (limit to clamped)
+        DownloadsSettingsStorage.saveInt(limit.storageKey, clamped)
     }
 
     fun setDownloadLocationUri(uri: String?) {

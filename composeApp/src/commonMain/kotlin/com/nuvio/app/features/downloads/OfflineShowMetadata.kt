@@ -1,0 +1,235 @@
+package com.nuvio.app.features.downloads
+
+import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.details.MetaPerson
+import com.nuvio.app.features.details.MetaVideo
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class StoredDownloadedVideoMeta(
+    val id: String,
+    val title: String,
+    val released: String? = null,
+    val thumbnail: String? = null,
+    val seasonPoster: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val overview: String? = null,
+    val runtime: Int? = null,
+    val tmdbRating: Double? = null,
+    val imdbRating: Double? = null,
+    val rating: Double? = null,
+)
+
+@Serializable
+data class StoredDownloadedCastMeta(
+    val name: String,
+    val role: String? = null,
+    val photo: String? = null,
+    val tmdbId: Int? = null,
+)
+
+@Serializable
+data class StoredDownloadedShowMeta(
+    val showId: String,
+    val title: String,
+    val type: String = "series",
+    val poster: String? = null,
+    val background: String? = null,
+    val logo: String? = null,
+    val description: String? = null,
+    val releaseInfo: String? = null,
+    val status: String? = null,
+    val imdbRating: String? = null,
+    val genres: List<String> = emptyList(),
+    val seasonPosters: Map<Int, String> = emptyMap(),
+    val videos: List<StoredDownloadedVideoMeta> = emptyList(),
+    val cast: List<StoredDownloadedCastMeta> = emptyList(),
+)
+
+/**
+ * Offline copies of title details, kept only for titles that have downloads so their
+ * details page still works without a connection.
+ */
+internal class OfflineShowMetadataStore {
+    private val byShowId = mutableMapOf<String, StoredDownloadedShowMeta>()
+
+    operator fun get(showId: String): StoredDownloadedShowMeta? = byShowId[showId]
+
+    fun snapshot(): Map<String, StoredDownloadedShowMeta> = byShowId.toMap()
+
+    fun replaceAll(stored: Map<String, StoredDownloadedShowMeta>) {
+        byShowId.clear()
+        byShowId.putAll(stored)
+    }
+
+    fun clear() = byShowId.clear()
+
+    fun remove(showId: String) {
+        byShowId.remove(showId)
+    }
+
+    /** Merges fresh details into the stored copy, keeping stored values the new copy lacks. */
+    fun merge(meta: MetaDetails) {
+        val existing = byShowId[meta.id]
+        byShowId[meta.id] = StoredDownloadedShowMeta(
+            showId = meta.id,
+            title = meta.name,
+            type = meta.type,
+            poster = meta.poster ?: existing?.poster,
+            background = meta.background ?: existing?.background,
+            logo = meta.logo ?: existing?.logo,
+            description = meta.description ?: existing?.description,
+            releaseInfo = meta.releaseInfo ?: existing?.releaseInfo,
+            status = meta.status ?: existing?.status,
+            imdbRating = meta.imdbRating ?: existing?.imdbRating,
+            genres = meta.genres.ifEmpty { existing?.genres.orEmpty() },
+            seasonPosters = existing?.seasonPosters.orEmpty() + meta.seasonPosters,
+            videos = meta.videos.map { it.toStored() }.ifEmpty { existing?.videos.orEmpty() },
+            cast = meta.cast.map { it.toStored() }.ifEmpty { existing?.cast.orEmpty() },
+        )
+    }
+
+    /** Records what is known about a title when no full details are cached, e.g. from a deep link. */
+    fun recordBasic(
+        showId: String,
+        type: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        episode: StoredDownloadedVideoMeta?,
+    ) {
+        val existing = byShowId[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title, type = type)
+        val isNewEpisode = episode != null &&
+            existing.videos.none { it.season == episode.season && it.episode == episode.episode }
+        byShowId[showId] = existing.copy(
+            logo = existing.logo ?: logo,
+            poster = existing.poster ?: poster,
+            background = existing.background ?: background,
+            videos = if (isNewEpisode) existing.videos + listOfNotNull(episode) else existing.videos,
+        )
+    }
+}
+
+/** Minimal episode details for a download whose show metadata doesn't list it. */
+fun DownloadItem.toMetaVideo(): MetaVideo =
+    MetaVideo(
+        id = videoId,
+        title = displayTitle(),
+        available = true,
+        thumbnail = episodeThumbnail ?: background ?: poster,
+        season = seasonNumber,
+        episode = episodeNumber,
+    )
+
+fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
+    StoredDownloadedVideoMeta(
+        id = id,
+        title = title,
+        released = released,
+        thumbnail = thumbnail,
+        seasonPoster = seasonPoster,
+        season = season,
+        episode = episode,
+        overview = overview,
+        runtime = runtime,
+        tmdbRating = tmdbRating,
+        imdbRating = imdbRating,
+        rating = rating,
+    )
+
+fun StoredDownloadedVideoMeta.toMetaVideo(): MetaVideo =
+    MetaVideo(
+        id = id,
+        title = title,
+        released = released,
+        available = true,
+        thumbnail = thumbnail,
+        seasonPoster = seasonPoster,
+        season = season,
+        episode = episode,
+        overview = overview,
+        runtime = runtime,
+        tmdbRating = tmdbRating,
+        imdbRating = imdbRating,
+        rating = rating ?: tmdbRating ?: imdbRating,
+    )
+
+fun MetaPerson.toStored(): StoredDownloadedCastMeta =
+    StoredDownloadedCastMeta(
+        name = name,
+        role = role,
+        photo = photo,
+        tmdbId = tmdbId,
+    )
+
+fun StoredDownloadedCastMeta.toMetaPerson(): MetaPerson =
+    MetaPerson(
+        name = name,
+        role = role,
+        photo = photo,
+        tmdbId = tmdbId,
+    )
+
+/** Builds offline details from the stored show metadata plus the show's downloaded items. */
+fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
+    val downloadedEpisodes = showDownloads
+        .filter { it.parentMetaId == showId && it.isEpisode }
+        .sortedForSeriesDownloads()
+
+    val storedVideos = videos.map { it.toMetaVideo() }
+    val existingKeys = storedVideos.mapNotNull { v ->
+        if (v.season != null && v.episode != null) "${v.season}:${v.episode}" else v.id.takeIf { it.isNotBlank() }
+    }.toSet()
+
+    val missingDownloaded = downloadedEpisodes
+        .filter { ep ->
+            val key = if (ep.seasonNumber != null && ep.episodeNumber != null) "${ep.seasonNumber}:${ep.episodeNumber}" else ep.videoId
+            key !in existingKeys
+        }
+        .map { it.toMetaVideo() }
+
+    val allVideos = if (storedVideos.isNotEmpty()) {
+        (storedVideos + missingDownloaded).sortedWith(
+            compareBy<MetaVideo> { it.season ?: Int.MAX_VALUE }
+                .thenBy { it.episode ?: Int.MAX_VALUE }
+                .thenBy { it.id }
+        )
+    } else {
+        downloadedEpisodes.map { it.toMetaVideo() }
+    }
+
+
+    return MetaDetails(
+        id = showId,
+        type = type,
+        name = title,
+        poster = poster,
+        background = background,
+        logo = logo,
+        description = description,
+        releaseInfo = releaseInfo,
+        status = status,
+        imdbRating = imdbRating,
+        genres = genres,
+        seasonPosters = seasonPosters,
+        videos = allVideos,
+        cast = cast.map { it.toMetaPerson() },
+    )
+}
+
+/** Basic details for downloads saved without show metadata (e.g. before it was stored). */
+fun List<DownloadItem>.toOfflineMetaDetails(showId: String): MetaDetails {
+    val showEpisodes = filter { it.parentMetaId == showId }
+    val first = showEpisodes.firstOrNull()
+    return MetaDetails(
+        id = showId,
+        type = first?.parentMetaType ?: "series",
+        name = first?.title.orEmpty(),
+        poster = showEpisodes.firstNotNullOfOrNull { it.poster },
+        background = showEpisodes.firstNotNullOfOrNull { it.background },
+        logo = showEpisodes.firstNotNullOfOrNull { it.logo },
+        videos = showEpisodes.sortedForSeriesDownloads().map { it.toMetaVideo() },
+    )
+}

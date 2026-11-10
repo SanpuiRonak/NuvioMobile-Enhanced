@@ -23,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +34,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.nuvio
+import kotlinx.coroutines.delay
+
+private const val STORAGE_REFRESH_INTERVAL_MS = 10_000L
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -39,15 +44,20 @@ fun DeviceStorageBar(
     appDownloadsBytes: Long,
     modifier: Modifier = Modifier,
 ) {
-    val stats = remember { DownloadsStoragePlatform.getDeviceStorageStats() }
+    val initialStats = remember { DownloadsStoragePlatform.getDeviceStorageStats() }
+    val stats by produceState(initialStats) {
+        while (true) {
+            delay(STORAGE_REFRESH_INTERVAL_MS)
+            value = DownloadsStoragePlatform.getDeviceStorageStats()
+        }
+    }
     val totalBytes = stats.totalBytes
     val freeBytes = stats.freeBytes
-    val usedBytes = (totalBytes - freeBytes).coerceAtLeast(0L)
-    val otherUsedBytes = (usedBytes - appDownloadsBytes).coerceAtLeast(0L)
+    val otherUsedBytes = (stats.usedBytes - appDownloadsBytes).coerceAtLeast(0L)
 
     val tokens = MaterialTheme.nuvio
     val downloadsColor = tokens.colors.accent
-    val otherAppsColor = Color(0xFF6366F1) // Indigo
+    val otherAppsColor = MaterialTheme.colorScheme.tertiary
     val freeSpaceColor = tokens.colors.borderSubtle
 
     Surface(
@@ -61,7 +71,6 @@ fun DeviceStorageBar(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -75,14 +84,17 @@ fun DeviceStorageBar(
                 )
                 if (totalBytes > 0L) {
                     Text(
-                        text = "${formatBytes(freeBytes)} free of ${formatBytes(totalBytes)}",
+                        text = stringResource(
+                            Res.string.downloads_storage_free_of_total,
+                            formatBytes(freeBytes),
+                            formatBytes(totalBytes),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
-            // Color-coded bar
             if (totalBytes > 0L) {
                 val downloadsFraction = (appDownloadsBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
                 val otherFraction = (otherUsedBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
@@ -121,7 +133,6 @@ fun DeviceStorageBar(
                 }
             }
 
-            // Legends
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -166,7 +177,7 @@ private fun StorageLegendItem(
                 .background(color),
         )
         Text(
-            text = "$label: $value",
+            text = stringResource(Res.string.downloads_storage_legend_value, label, value),
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

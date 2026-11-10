@@ -126,14 +126,18 @@ object MetaDetailsRepository {
         val savedOfflineMeta = DownloadsRepository.getSavedMetaDetails(id)
         val isOffline = NetworkStatusRepository.uiState.value.isOfflineLike
 
+        /** Shows the saved copy of a downloaded title; false when there is none. */
+        fun publishSavedOfflineMeta(reason: String): Boolean {
+            savedOfflineMeta ?: return false
+            log.i { "$reason, using saved download metadata type=$type id=$id" }
+            _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
+            activeRequestKey = requestKey
+            return true
+        }
+
+        if (isOffline && publishSavedOfflineMeta("Offline")) return
         if (savedOfflineMeta != null) {
-            if (isOffline) {
-                log.d { "Offline: using saved download metadata for type=$type id=$id" }
-                InAppLogger.debug("Metadata/MetaDetailsRepository", "Using offline saved meta type=$type id=$id")
-                _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
-                activeRequestKey = requestKey
-                return
-            } else if (currentState.meta?.type != type || currentState.meta.id != id) {
+            if (currentState.meta?.type != type || currentState.meta.id != id) {
                 log.d { "Using saved download metadata while refreshing for type=$type id=$id" }
                 _uiState.value = MetaDetailsUiState(
                     isLoading = true,
@@ -179,12 +183,7 @@ object MetaDetailsRepository {
                     return@launch
                 }
 
-                if (savedOfflineMeta != null) {
-                    log.i { "No addons or TMDB meta, using saved offline meta type=$type id=$id" }
-                    _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
-                    activeRequestKey = requestKey
-                    return@launch
-                }
+                if (publishSavedOfflineMeta("No addon or TMDB meta")) return@launch
 
                 log.w { "No addon provides meta for type=$type id=$id" }
                 InAppLogger.warn("Metadata/MetaDetailsRepository", "No addon provides meta type=$type id=$id lookup=$metaLookupId")
@@ -223,12 +222,7 @@ object MetaDetailsRepository {
                 return@launch
             }
 
-            if (savedOfflineMeta != null) {
-                log.i { "Failed to load meta from all providers, falling back to saved offline meta type=$type id=$id" }
-                _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
-                activeRequestKey = requestKey
-                return@launch
-            }
+            if (publishSavedOfflineMeta("Failed to load meta from all providers")) return@launch
 
             InAppLogger.error("Metadata/MetaDetailsRepository", "Failed to load meta from all providers type=$type id=$id lookup=$metaLookupId")
             _uiState.value = MetaDetailsUiState(
@@ -620,8 +614,6 @@ object MetaDetailsRepository {
         val cachedEntry = CachedMetaEntry(baseMeta = meta)
         cachedMetaByRequestKey[requestKey] = cachedEntry
 
-        DownloadsRepository.refreshShowMetadataIfDownloaded(meta)
-
         if (!shouldEnrichForMetaScreen(meta, fallbackItemId, mdbListSettings)) {
             _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())
             activeRequestKey = requestKey
@@ -642,7 +634,6 @@ object MetaDetailsRepository {
                 settingsFingerprint = metaScreenSettingsFingerprint,
             )
         }
-        DownloadsRepository.refreshShowMetadataIfDownloaded(enrichedMeta)
         cachedMetaByRequestKey[requestKey] = cachedEntry.copy(
             metaScreenMeta = enrichedMeta,
             metaScreenSettingsFingerprint = metaScreenSettingsFingerprint,
@@ -864,36 +855,35 @@ object MetaDetailsRepository {
 
 /** Streams the addon embedded in this title's metadata for [videoId], if any. */
 internal fun MetaDetails.findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {
-    val meta = this
-        val videosWithStreams = meta.videos.filter { it.streams.isNotEmpty() }
-        if (videosWithStreams.isEmpty()) return emptyList()
+    val videosWithStreams = videos.filter { it.streams.isNotEmpty() }
+    if (videosWithStreams.isEmpty()) return emptyList()
 
-        val directMatch = videosWithStreams.firstOrNull { it.id == videoId }
-        if (directMatch != null) return directMatch.streams
+    val directMatch = videosWithStreams.firstOrNull { it.id == videoId }
+    if (directMatch != null) return directMatch.streams
 
-        val parts = videoId.split(":")
-        if (parts.size >= 3) {
-            val season = parts[parts.size - 2].toIntOrNull()
-            val episode = parts[parts.size - 1].toIntOrNull()
-            if (season != null && episode != null) {
-                val episodeMatch = videosWithStreams.firstOrNull { it.season == season && it.episode == episode }
-                if (episodeMatch != null) return episodeMatch.streams
-            }
+    val parts = videoId.split(":")
+    if (parts.size >= 3) {
+        val season = parts[parts.size - 2].toIntOrNull()
+        val episode = parts[parts.size - 1].toIntOrNull()
+        if (season != null && episode != null) {
+            val episodeMatch = videosWithStreams.firstOrNull { it.season == season && it.episode == episode }
+            if (episodeMatch != null) return episodeMatch.streams
         }
-
-        val prefixMatch = videosWithStreams.firstOrNull { it.id.startsWith("$videoId:") }
-        if (prefixMatch != null) return prefixMatch.streams
-
-        if (videoId == meta.id && videosWithStreams.size == 1) {
-            return videosWithStreams.first().streams
-        }
-
-        if (videoId == meta.id && videosWithStreams.isNotEmpty()) {
-            return videosWithStreams.flatMap { it.streams }
-        }
-
-        return emptyList()
     }
+
+    val prefixMatch = videosWithStreams.firstOrNull { it.id.startsWith("$videoId:") }
+    if (prefixMatch != null) return prefixMatch.streams
+
+    if (videoId == id && videosWithStreams.size == 1) {
+        return videosWithStreams.first().streams
+    }
+
+    if (videoId == id && videosWithStreams.isNotEmpty()) {
+        return videosWithStreams.flatMap { it.streams }
+    }
+
+    return emptyList()
+}
 
 internal sealed interface MetaLookupOutcome {
     class Loaded(val meta: MetaDetails) : MetaLookupOutcome

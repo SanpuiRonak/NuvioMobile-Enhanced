@@ -1,9 +1,6 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.i18n.localizedByteUnit
-import com.nuvio.app.features.details.MetaDetails
-import com.nuvio.app.features.details.MetaPerson
-import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.player.SubtitleAddonRequest
 import com.nuvio.app.features.streams.StreamSubtitle
 import kotlinx.serialization.Serializable
@@ -25,7 +22,6 @@ enum class DownloadStatus {
     Failed,
 }
 
-@Serializable
 enum class DownloadPreferredResolution(
     val resolution: Int,
     val label: String,
@@ -37,60 +33,26 @@ enum class DownloadPreferredResolution(
     companion object {
         val DEFAULT = P1080
 
-        fun fromStorage(value: String?): DownloadPreferredResolution {
-            if (value.isNullOrBlank()) return DEFAULT
-            val trimmed = value.trim()
-            return entries.firstOrNull {
-                it.name.equals(trimmed, ignoreCase = true) ||
-                    it.resolution.toString() == trimmed ||
-                    it.label.equals(trimmed, ignoreCase = true)
-            } ?: DEFAULT
-        }
+        fun fromStorage(value: String?): DownloadPreferredResolution =
+            entries.firstOrNull { it.name == value?.trim() } ?: DEFAULT
     }
 }
 
+/** A user-adjustable cap on how many downloads may run at once. */
+enum class DownloadConcurrencyLimit(
+    val storageKey: String,
+    val defaultValue: Int,
+) {
+    TotalDownloads("max_download_concurrency", 3),
+    EpisodesPerShow("max_series_episode_concurrency", 1),
+    ConcurrentShows("max_concurrent_shows", 1);
 
-@Serializable
-data class StoredDownloadedVideoMeta(
-    val id: String,
-    val title: String,
-    val released: String? = null,
-    val thumbnail: String? = null,
-    val seasonPoster: String? = null,
-    val season: Int? = null,
-    val episode: Int? = null,
-    val overview: String? = null,
-    val runtime: Int? = null,
-    val tmdbRating: Double? = null,
-    val imdbRating: Double? = null,
-    val rating: Double? = null,
-)
+    fun clamp(value: Int): Int = value.coerceIn(1, MAX_VALUE)
 
-@Serializable
-data class StoredDownloadedCastMeta(
-    val name: String,
-    val role: String? = null,
-    val photo: String? = null,
-    val tmdbId: Int? = null,
-)
-
-@Serializable
-data class StoredDownloadedShowMeta(
-    val showId: String,
-    val title: String,
-    val type: String = "series",
-    val poster: String? = null,
-    val background: String? = null,
-    val logo: String? = null,
-    val description: String? = null,
-    val releaseInfo: String? = null,
-    val status: String? = null,
-    val imdbRating: String? = null,
-    val genres: List<String> = emptyList(),
-    val seasonPosters: Map<Int, String> = emptyMap(),
-    val videos: List<StoredDownloadedVideoMeta> = emptyList(),
-    val cast: List<StoredDownloadedCastMeta> = emptyList(),
-)
+    companion object {
+        const val MAX_VALUE = 5
+    }
+}
 
 @Serializable
 data class DownloadItem(
@@ -128,11 +90,12 @@ data class DownloadItem(
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null
 
-    val isDownloading: Boolean
-        get() = status == DownloadStatus.Downloading
-
     val isActive: Boolean
         get() = status == DownloadStatus.Downloading || status == DownloadStatus.Queued
+
+    /** Paused or failed: resuming continues a paused download and retries a failed one. */
+    val isResumable: Boolean
+        get() = status == DownloadStatus.Paused || status == DownloadStatus.Failed
 
     val isPlayable: Boolean
         get() = status == DownloadStatus.Completed && !localFileUri.isNullOrBlank()
@@ -184,6 +147,26 @@ enum class DownloadEnqueueResult {
     }
 }
 
+/** How many downloads are in each unfinished state. */
+internal data class DownloadStatusCounts(
+    val downloading: Int = 0,
+    val queued: Int = 0,
+    val paused: Int = 0,
+    val failed: Int = 0,
+) {
+    val hasActive: Boolean get() = downloading > 0 || queued > 0
+}
+
+internal fun List<DownloadItem>.statusCounts(): DownloadStatusCounts {
+    val byStatus = groupingBy { it.status }.eachCount()
+    return DownloadStatusCounts(
+        downloading = byStatus[DownloadStatus.Downloading] ?: 0,
+        queued = byStatus[DownloadStatus.Queued] ?: 0,
+        paused = byStatus[DownloadStatus.Paused] ?: 0,
+        failed = byStatus[DownloadStatus.Failed] ?: 0,
+    )
+}
+
 internal fun List<DownloadItem>.sortedForSeriesDownloads(): List<DownloadItem> =
     sortedWith(downloadSeriesEpisodeComparator)
 
@@ -200,128 +183,6 @@ internal fun DownloadItem.displayTitle(): String =
     } else {
         title
     }
-
-/** Minimal episode details for a download whose show metadata doesn't list it. */
-fun DownloadItem.toMetaVideo(): MetaVideo =
-    MetaVideo(
-        id = videoId,
-        title = displayTitle(),
-        available = true,
-        thumbnail = episodeThumbnail ?: background ?: poster,
-        season = seasonNumber,
-        episode = episodeNumber,
-    )
-
-fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
-    StoredDownloadedVideoMeta(
-        id = id,
-        title = title,
-        released = released,
-        thumbnail = thumbnail,
-        seasonPoster = seasonPoster,
-        season = season,
-        episode = episode,
-        overview = overview,
-        runtime = runtime,
-        tmdbRating = tmdbRating,
-        imdbRating = imdbRating,
-        rating = rating,
-    )
-
-fun StoredDownloadedVideoMeta.toMetaVideo(): MetaVideo =
-    MetaVideo(
-        id = id,
-        title = title,
-        released = released,
-        available = true,
-        thumbnail = thumbnail,
-        seasonPoster = seasonPoster,
-        season = season,
-        episode = episode,
-        overview = overview,
-        runtime = runtime,
-        tmdbRating = tmdbRating,
-        imdbRating = imdbRating,
-        rating = rating ?: tmdbRating ?: imdbRating,
-    )
-
-fun MetaPerson.toStored(): StoredDownloadedCastMeta =
-    StoredDownloadedCastMeta(
-        name = name,
-        role = role,
-        photo = photo,
-        tmdbId = tmdbId,
-    )
-
-fun StoredDownloadedCastMeta.toMetaPerson(): MetaPerson =
-    MetaPerson(
-        name = name,
-        role = role,
-        photo = photo,
-        tmdbId = tmdbId,
-    )
-
-/** Builds offline details from the stored show metadata plus the show's downloaded items. */
-fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
-    val downloadedEpisodes = showDownloads
-        .filter { it.parentMetaId == showId && it.isEpisode }
-        .sortedForSeriesDownloads()
-
-    val storedVideos = videos.map { it.toMetaVideo() }
-    val existingKeys = storedVideos.mapNotNull { v ->
-        if (v.season != null && v.episode != null) "${v.season}:${v.episode}" else v.id.takeIf { it.isNotBlank() }
-    }.toSet()
-
-    val missingDownloaded = downloadedEpisodes
-        .filter { ep ->
-            val key = if (ep.seasonNumber != null && ep.episodeNumber != null) "${ep.seasonNumber}:${ep.episodeNumber}" else ep.videoId
-            key !in existingKeys
-        }
-        .map { it.toMetaVideo() }
-
-    val allVideos = if (storedVideos.isNotEmpty()) {
-        (storedVideos + missingDownloaded).sortedWith(
-            compareBy<MetaVideo> { it.season ?: Int.MAX_VALUE }
-                .thenBy { it.episode ?: Int.MAX_VALUE }
-                .thenBy { it.id }
-        )
-    } else {
-        downloadedEpisodes.map { it.toMetaVideo() }
-    }
-
-
-    return MetaDetails(
-        id = showId,
-        type = type,
-        name = title,
-        poster = poster,
-        background = background,
-        logo = logo,
-        description = description,
-        releaseInfo = releaseInfo,
-        status = status,
-        imdbRating = imdbRating,
-        genres = genres,
-        seasonPosters = seasonPosters,
-        videos = allVideos,
-        cast = cast.map { it.toMetaPerson() },
-    )
-}
-
-/** Basic details for downloads saved without show metadata (e.g. before it was stored). */
-fun List<DownloadItem>.toOfflineMetaDetails(showId: String): MetaDetails {
-    val showEpisodes = filter { it.parentMetaId == showId }
-    val first = showEpisodes.firstOrNull()
-    return MetaDetails(
-        id = showId,
-        type = first?.parentMetaType ?: "series",
-        name = first?.title.orEmpty(),
-        poster = showEpisodes.firstNotNullOfOrNull { it.poster },
-        background = showEpisodes.firstNotNullOfOrNull { it.background },
-        logo = showEpisodes.firstNotNullOfOrNull { it.logo },
-        videos = showEpisodes.sortedForSeriesDownloads().map { it.toMetaVideo() },
-    )
-}
 
 internal fun formatBytes(bytes: Long): String {
     if (bytes <= 0L) return "0 ${localizedByteUnit("B")}"

@@ -31,11 +31,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -52,19 +52,21 @@ import com.nuvio.app.features.downloads.BatchModalStep
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.EpisodePlanStatus
 import com.nuvio.app.features.downloads.PlannedEpisodeItem
-import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
-import com.nuvio.app.features.downloads.SeasonBatchPlan
+import com.nuvio.app.features.downloads.BatchDownloadCoordinator
+import com.nuvio.app.features.downloads.BatchDownloadPlan
 import com.nuvio.app.features.downloads.batchEpisodeKey
 import com.nuvio.app.features.downloads.formatBytes
 import com.nuvio.app.features.downloads.qualityBadge
+import com.nuvio.app.features.downloads.seasonLabel
 import com.nuvio.app.features.downloads.isBatchEpisodeDownloaded
 import com.nuvio.app.features.streams.StreamItem
 import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun SeasonBatchConfirmationDialog(
-    plan: SeasonBatchPlan,
+fun BatchDownloadDialog(
+    plan: BatchDownloadPlan,
     isEpisodeWatched: (MetaVideo) -> Boolean = { false },
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit,
@@ -93,13 +95,13 @@ fun SeasonBatchConfirmationDialog(
     val overrideItem = overrideTargetItem
     if (overrideItem != null) {
         val currentSeason = when (val step = plan.step) {
-            is BatchModalStep.SourceSelection -> plan.activeSeasons.getOrNull(step.seasonIndex) ?: plan.season
-            else -> plan.season
+            is BatchModalStep.SourceSelection -> plan.seasonToSourceAt(step.seasonIndex)
+            else -> plan.initialSeason
         }
         StreamOverrideDialog(
             target = overrideItem,
             onSelect = { stream ->
-                SeasonBatchDownloadCoordinator.overrideEpisodeStream(
+                BatchDownloadCoordinator.overrideEpisodeStream(
                     season = currentSeason,
                     episode = overrideItem.episode,
                     stream = stream,
@@ -113,7 +115,7 @@ fun SeasonBatchConfirmationDialog(
 
 @Composable
 private fun EpisodeSelectionDialog(
-    plan: SeasonBatchPlan,
+    plan: BatchDownloadPlan,
     isEpisodeWatched: (MetaVideo) -> Boolean,
     onDismissRequest: () -> Unit,
 ) {
@@ -121,37 +123,35 @@ private fun EpisodeSelectionDialog(
         onDismissRequest = onDismissRequest,
         title = plan.meta.name,
     ) {
-        val downloadsUiState by DownloadsRepository.uiState.collectAsState()
+        val downloadsUiState by remember {
+            DownloadsRepository.ensureLoaded()
+            DownloadsRepository.uiState
+        }.collectAsStateWithLifecycle()
         val currentDownloads = downloadsUiState.items
 
-        fun isDownloaded(ep: MetaVideo, season: Int): Boolean =
-            isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, ep, season)
+        fun isDownloaded(episode: MetaVideo, season: Int): Boolean =
+            isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, episode, season)
 
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 1. Season chips row (allow choosing from several seasons)
-            if (plan.allSeasons.size > 1) {
+            if (plan.availableSeasons.size > 1) {
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(plan.allSeasons) { seasonNumber ->
-                        val seasonLabel = if (seasonNumber == 0) {
-                            stringResource(Res.string.episodes_specials)
-                        } else {
-                            stringResource(Res.string.episodes_season, seasonNumber)
-                        }
-                        val countInSeason = plan.episodesBySeason[seasonNumber].orEmpty().count { ep ->
-                            batchEpisodeKey(seasonNumber, ep.episode ?: 0) in plan.selectedEpisodeKeys
+                    items(plan.availableSeasons) { seasonNumber ->
+                        val seasonLabel = seasonLabel(seasonNumber)
+                        val countInSeason = plan.episodesBySeason[seasonNumber].orEmpty().count { episode ->
+                            batchEpisodeKey(seasonNumber, episode.episode ?: 0) in plan.selectedEpisodeKeys
                         }
                         val chipText = if (countInSeason > 0) "$seasonLabel ($countInSeason)" else seasonLabel
-                        val isSelectedSeason = plan.currentPickerSeason == seasonNumber
+                        val isSelectedSeason = plan.visibleSeason == seasonNumber
 
                         FilterChip(
                             selected = isSelectedSeason,
-                            onClick = { SeasonBatchDownloadCoordinator.setPickerSeason(seasonNumber) },
+                            onClick = { BatchDownloadCoordinator.showSeason(seasonNumber) },
                             label = { Text(chipText, style = MaterialTheme.typography.labelMedium) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -161,14 +161,8 @@ private fun EpisodeSelectionDialog(
                     }
                 }
             }
-
-            // 2. Current season select/deselect row
-            val currentSeasonEpisodes = plan.episodesBySeason[plan.currentPickerSeason].orEmpty()
-            val currentSeasonLabel = if (plan.currentPickerSeason == 0) {
-                stringResource(Res.string.episodes_specials)
-            } else {
-                stringResource(Res.string.episodes_season, plan.currentPickerSeason)
-            }
+            val currentSeasonEpisodes = plan.episodesBySeason[plan.visibleSeason].orEmpty()
+            val currentSeasonLabel = seasonLabel(plan.visibleSeason)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -188,42 +182,20 @@ private fun EpisodeSelectionDialog(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
-                        onClick = {
-                            SeasonBatchDownloadCoordinator.selectUnwatchedForSeason(
-                                season = plan.currentPickerSeason,
-                                isEpisodeWatched = isEpisodeWatched,
-                            )
-                        },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = stringResource(Res.string.downloads_select_unwatched),
-                            style = MaterialTheme.typography.labelSmall,
+                    SelectionTextButton(Res.string.downloads_select_unwatched) {
+                        BatchDownloadCoordinator.selectUnwatchedForSeason(
+                            season = plan.visibleSeason,
+                            isEpisodeWatched = isEpisodeWatched,
                         )
                     }
-                    TextButton(
-                        onClick = { SeasonBatchDownloadCoordinator.selectAllForSeason(plan.currentPickerSeason) },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = stringResource(Res.string.downloads_select_all),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                    SelectionTextButton(Res.string.downloads_select_all) {
+                        BatchDownloadCoordinator.selectAllForSeason(plan.visibleSeason)
                     }
-                    TextButton(
-                        onClick = { SeasonBatchDownloadCoordinator.deselectAllForSeason(plan.currentPickerSeason) },
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = stringResource(Res.string.downloads_deselect_all),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                    SelectionTextButton(Res.string.downloads_deselect_all) {
+                        BatchDownloadCoordinator.deselectAllForSeason(plan.visibleSeason)
                     }
                 }
             }
-
-            // 4. Episodes list for current season
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -233,18 +205,18 @@ private fun EpisodeSelectionDialog(
                 items(
                     items = currentSeasonEpisodes,
                     key = { it.id.ifBlank { "${it.season}_${it.episode}" } },
-                ) { ep ->
-                    val epNum = ep.episode ?: 0
-                    val key = batchEpisodeKey(plan.currentPickerSeason, epNum)
+                ) { episode ->
+                    val episodeNumber = episode.episode ?: 0
+                    val key = batchEpisodeKey(plan.visibleSeason, episodeNumber)
                     val isChecked = key in plan.selectedEpisodeKeys
-                    val downloaded = isDownloaded(ep, plan.currentPickerSeason)
-                    val watched = plan.isEpisodeWatched(ep, plan.currentPickerSeason, isEpisodeWatched)
+                    val downloaded = isDownloaded(episode, plan.visibleSeason)
+                    val watched = plan.isEpisodeWatched(episode, plan.visibleSeason, isEpisodeWatched)
 
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable(enabled = !downloaded) {
-                                SeasonBatchDownloadCoordinator.toggleEpisodeSelection(plan.currentPickerSeason, epNum)
+                                BatchDownloadCoordinator.toggleEpisodeSelection(plan.visibleSeason, episodeNumber)
                             },
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isChecked) 0.5f else 0.25f),
@@ -260,14 +232,14 @@ private fun EpisodeSelectionDialog(
                                 checked = if (downloaded) true else isChecked,
                                 enabled = !downloaded,
                                 onCheckedChange = {
-                                    SeasonBatchDownloadCoordinator.toggleEpisodeSelection(plan.currentPickerSeason, epNum)
+                                    BatchDownloadCoordinator.toggleEpisodeSelection(plan.visibleSeason, episodeNumber)
                                 },
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                val epTitle = ep.title?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.downloads_episode_fallback_title, epNum)
+                                val episodeTitle = episode.title?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.downloads_episode_fallback_title, episodeNumber)
                                 Text(
-                                    text = "E$epNum • $epTitle",
+                                    text = "E$episodeNumber • $episodeTitle",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
@@ -288,10 +260,8 @@ private fun EpisodeSelectionDialog(
                     }
                 }
             }
-
-            // Summary text
             val selectedCount = plan.totalSelectedCount
-            val seasonsCount = plan.allSeasons.count(plan::isSeasonSelected)
+            val seasonsCount = plan.availableSeasons.count(plan::isSeasonSelected)
             val summaryText = if (seasonsCount > 1) {
                 stringResource(Res.string.downloads_episodes_selected_multi_season, selectedCount, seasonsCount)
             } else {
@@ -313,7 +283,7 @@ private fun EpisodeSelectionDialog(
             )
             DialogButton(
                 text = stringResource(Res.string.downloads_action_continue_source_selection),
-                onClick = { SeasonBatchDownloadCoordinator.continueToSourceSelection() },
+                onClick = { BatchDownloadCoordinator.continueToSourceSelection() },
                 style = DialogButtonStyle.Primary,
                 enabled = plan.totalSelectedCount > 0,
             )
@@ -323,18 +293,18 @@ private fun EpisodeSelectionDialog(
 
 @Composable
 private fun SourceSelectionDialog(
-    plan: SeasonBatchPlan,
+    plan: BatchDownloadPlan,
     seasonIndex: Int,
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit,
     onOverrideClicked: (PlannedEpisodeItem) -> Unit,
 ) {
-    val totalSeasons = plan.activeSeasons.size
-    val currentSeason = plan.activeSeasons.getOrNull(seasonIndex) ?: plan.season
+    val totalSeasons = plan.seasonsToSource.size
+    val currentSeason = plan.seasonToSourceAt(seasonIndex)
     val currentSeasonPlan = plan.seasonPlans[currentSeason]
     val isPlanning = currentSeasonPlan?.isPlanning == true
 
-    val dialogTitle = if (plan.isSingleMedia) {
+    val dialogTitle = if (plan.isSingleTitle) {
         plan.meta.name
     } else {
         stringResource(
@@ -344,12 +314,10 @@ private fun SourceSelectionDialog(
         )
     }
 
-    val currentSeasonLabel = if (plan.isSingleMedia) {
+    val currentSeasonLabel = if (plan.isSingleTitle) {
         plan.meta.releaseInfo.orEmpty()
-    } else if (currentSeason == 0) {
-        stringResource(Res.string.episodes_specials)
     } else {
-        stringResource(Res.string.episodes_season, currentSeason)
+        seasonLabel(currentSeason)
     }
 
     DialogSurface(
@@ -416,27 +384,27 @@ private fun SourceSelectionDialog(
 
         DialogButtons {
             DialogButton(
-                text = if (plan.isSingleMedia) {
+                text = if (plan.isSingleTitle) {
                     stringResource(Res.string.action_cancel)
                 } else {
                     stringResource(Res.string.action_back)
                 },
                 onClick = {
-                    if (plan.isSingleMedia) {
+                    if (plan.isSingleTitle) {
                         onDismissRequest()
                     } else if (seasonIndex > 0) {
-                        SeasonBatchDownloadCoordinator.goToSeasonIndex(seasonIndex - 1)
+                        BatchDownloadCoordinator.goToSeasonIndex(seasonIndex - 1)
                     } else {
-                        SeasonBatchDownloadCoordinator.goToEpisodeSelection()
+                        BatchDownloadCoordinator.goToEpisodeSelection()
                     }
                 },
                 style = DialogButtonStyle.Secondary,
             )
 
-            if (!isLastSeason && !plan.isSingleMedia) {
+            if (!isLastSeason && !plan.isSingleTitle) {
                 DialogButton(
                     text = stringResource(Res.string.downloads_next_season),
-                    onClick = { SeasonBatchDownloadCoordinator.goToSeasonIndex(seasonIndex + 1) },
+                    onClick = { BatchDownloadCoordinator.goToSeasonIndex(seasonIndex + 1) },
                     style = DialogButtonStyle.Primary,
                     enabled = !isPlanning,
                     loading = isPlanning,
@@ -460,11 +428,11 @@ private fun EpisodeSourcePlanRow(
     defaultTitle: String,
     onChangeSource: () -> Unit,
 ) {
-    val epTitle = item.episode.title?.takeIf { it.isNotBlank() } ?: defaultTitle
+    val episodeTitle = item.episode.title?.takeIf { it.isNotBlank() } ?: defaultTitle
     val displayText = if (item.episode.episode != null) {
-        "E${item.episode.episode} • $epTitle"
+        "E${item.episode.episode} • $episodeTitle"
     } else {
-        epTitle
+        episodeTitle
     }
 
     Surface(
@@ -504,7 +472,7 @@ private fun EpisodeSourcePlanRow(
                             )
                         }
                     }
-                    item.isAlreadyDownloaded || item.status == EpisodePlanStatus.AlreadyDownloaded -> {
+                    item.status == EpisodePlanStatus.AlreadyDownloaded -> {
                         Text(
                             text = stringResource(Res.string.season_download_already_downloaded),
                             style = MaterialTheme.typography.bodySmall,
@@ -562,9 +530,9 @@ private fun StreamOverrideDialog(
     onSelect: (StreamItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val epNum = target.episode.episode
-    val dialogTitle = if (epNum != null) {
-        stringResource(Res.string.downloads_select_source_dialog_title, epNum)
+    val episodeNumber = target.episode.episode
+    val dialogTitle = if (episodeNumber != null) {
+        stringResource(Res.string.downloads_select_source_dialog_title, episodeNumber)
     } else {
         stringResource(Res.string.downloads_select_source_dialog_title_single)
     }
@@ -590,8 +558,7 @@ private fun StreamOverrideDialog(
                     val facts = remember(stream) {
                         DebridStreamMetadata.facts(stream, DebridStreamPreferences())
                     }
-                    val isCurrentSelection = stream.name == target.streamCandidate?.name &&
-                        stream.addonName == target.streamCandidate?.addonName
+                    val isCurrentSelection = stream == target.streamCandidate
 
                     val badge = facts.qualityBadge()
                     val size = facts.size?.takeIf { it > 0 }?.let { formatBytes(it) }
@@ -658,5 +625,15 @@ private fun StreamOverrideDialog(
                 style = DialogButtonStyle.Secondary,
             )
         }
+    }
+}
+
+@Composable
+private fun SelectionTextButton(label: StringResource, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(text = stringResource(label), style = MaterialTheme.typography.labelSmall)
     }
 }

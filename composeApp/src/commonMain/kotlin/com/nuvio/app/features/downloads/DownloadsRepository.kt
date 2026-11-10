@@ -1,10 +1,17 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.player.SubtitleRequestExtras
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,14 +31,36 @@ object DownloadsRepository {
     private val _hasUnseenCompleted = MutableStateFlow(false)
     val hasUnseenCompleted: StateFlow<Boolean> = _hasUnseenCompleted.asStateFlow()
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
-    private val showMetadata = mutableMapOf<String, StoredDownloadedShowMeta>()
+    private val offlineMetadata = OfflineShowMetadataStore()
     private var hasLoaded = false
+    private var isObservingInputs = false
     private var nextDownloadOrdinal = 0L
 
     fun ensureLoaded() {
         if (hasLoaded) return
         loadFromDisk()
+        observeInputs()
+    }
+
+    /**
+     * Restarts queued downloads when a limit is raised or the network allows them again,
+     * and keeps offline details current whenever a downloaded title's details are opened.
+     */
+    private fun observeInputs() {
+        if (isObservingInputs) return
+        isObservingInputs = true
+        combine(
+            DownloadsSettingsRepository.concurrencyLimits,
+            DownloadsSettingsRepository.allowMobileDataDownloads,
+            NetworkStatusRepository.uiState,
+        ) { _, _, _ -> }
+            .onEach { if (hasLoaded) advanceDownloadQueue() }
+            .launchIn(scope)
+        MetaDetailsRepository.uiState
+            .onEach { state -> if (hasLoaded) state.meta?.let(::refreshShowMetadataIfDownloaded) }
+            .launchIn(scope)
     }
 
     fun onProfileChanged() {
@@ -47,33 +76,29 @@ object DownloadsRepository {
         activeHandles.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
-        showMetadata.clear()
+        offlineMetadata.clear()
         _uiState.value = DownloadsUiState()
         notifyLiveStatusPlatform()
     }
 
     fun getShowMetadata(showId: String): StoredDownloadedShowMeta? {
         ensureLoaded()
-        return showMetadata[showId]
+        return offlineMetadata[showId]
     }
 
     fun getSavedMetaDetails(showId: String): MetaDetails? {
         ensureLoaded()
         val showItems = _uiState.value.items.filter { it.parentMetaId == showId }
-        return showMetadata[showId]?.toMetaDetails(showItems)
+        return offlineMetadata[showId]?.toMetaDetails(showItems)
             ?: showItems.takeIf { it.isNotEmpty() }?.toOfflineMetaDetails(showId)
     }
 
     /** Keeps the offline copy of [meta] current, but only for titles that have downloads. */
-    fun refreshShowMetadataIfDownloaded(meta: MetaDetails) {
-        if (hasDownloadsFor(meta.id) || getShowMetadata(meta.id) != null) {
-            updateShowMetadataFromMetaDetails(meta)
-        }
-    }
-
-    fun hasDownloadsFor(showId: String): Boolean {
-        ensureLoaded()
-        return _uiState.value.items.any { it.parentMetaId == showId }
+    private fun refreshShowMetadataIfDownloaded(meta: MetaDetails) {
+        val hasDownloads = _uiState.value.items.any { it.parentMetaId == meta.id }
+        if (!hasDownloads && offlineMetadata[meta.id] == null) return
+        offlineMetadata.merge(meta)
+        persist()
     }
 
     fun findEpisodeDownload(
@@ -104,44 +129,6 @@ object DownloadsRepository {
             ?: matching.firstOrNull { it.status == DownloadStatus.Completed && it.hasPlayableLocalFile() }
             ?: matching.firstOrNull { it.status == DownloadStatus.Completed }
             ?: matching.firstOrNull()
-    }
-
-    fun updateShowMetadataFromMetaDetails(meta: MetaDetails) {
-        ensureLoaded()
-        mergeShowMetadata(meta)
-        persist()
-    }
-
-    /** Merges fresh details into the stored offline copy, keeping stored values the new copy lacks. */
-    private fun mergeShowMetadata(meta: MetaDetails) {
-        val existing = showMetadata[meta.id]
-        val videosToSave = if (meta.videos.isNotEmpty()) {
-            meta.videos.map { it.toStored() }
-        } else {
-            existing?.videos ?: emptyList()
-        }
-        val castToSave = if (meta.cast.isNotEmpty()) {
-            meta.cast.map { it.toStored() }
-        } else {
-            existing?.cast ?: emptyList()
-        }
-        val updated = StoredDownloadedShowMeta(
-            showId = meta.id,
-            title = meta.name,
-            type = meta.type,
-            poster = meta.poster ?: existing?.poster,
-            background = meta.background ?: existing?.background,
-            logo = meta.logo ?: existing?.logo,
-            description = meta.description ?: existing?.description,
-            releaseInfo = meta.releaseInfo ?: existing?.releaseInfo,
-            status = meta.status ?: existing?.status,
-            imdbRating = meta.imdbRating ?: existing?.imdbRating,
-            genres = meta.genres.takeIf { it.isNotEmpty() } ?: existing?.genres ?: emptyList(),
-            seasonPosters = (existing?.seasonPosters.orEmpty() + meta.seasonPosters),
-            videos = videosToSave,
-            cast = castToSave,
-        )
-        showMetadata[meta.id] = updated
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -234,6 +221,10 @@ object DownloadsRepository {
             return DownloadEnqueueResult.UnsupportedFormat
         }
 
+        if (!isDownloadNetworkAllowed()) {
+            return DownloadEnqueueResult.RequiresWifi
+        }
+
         val now = DownloadsClock.nowEpochMs()
         val logicalKey = buildLogicalKey(
             parentMetaId = parentMetaId,
@@ -246,9 +237,9 @@ object DownloadsRepository {
             ?.firstOrNull { it.season == seasonNumber && it.episode == episodeNumber }
             ?.thumbnail
         if (meta != null) {
-            mergeShowMetadata(meta)
+            offlineMetadata.merge(meta)
         } else {
-            storeBasicShowMetadata(
+            offlineMetadata.recordBasic(
                 showId = parentMetaId,
                 type = parentMetaType,
                 title = title,
@@ -292,16 +283,7 @@ object DownloadsRepository {
             downloadId = downloadId,
         )
 
-        val showKey = parentMetaId.takeIf { seasonNumber != null && episodeNumber != null && it.isNotBlank() }
-        val canStart = canStartDownload(
-            showKey = showKey,
-            downloading = currentItems.filter { it.status == DownloadStatus.Downloading },
-            limits = currentDownloadLimits(),
-        )
-
-        val targetStatus = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued
-
-        val item = DownloadItem(
+        val queuedItem = DownloadItem(
             id = downloadId,
             contentType = contentType,
             parentMetaId = parentMetaId,
@@ -330,18 +312,23 @@ object DownloadsRepository {
             sourceSubtitles = stream.externalSubtitles,
             localFileUri = null,
             fileName = fileName,
-            status = targetStatus,
+            status = DownloadStatus.Queued,
             downloadedBytes = 0L,
             totalBytes = null,
             errorMessage = null,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
         )
+        val canStart = DownloadQueuePolicy.current().canStart(
+            showKey = queuedItem.showKey,
+            downloading = currentItems.filter { it.status == DownloadStatus.Downloading },
+        )
+        val item = if (canStart) queuedItem.copy(status = DownloadStatus.Downloading) else queuedItem
 
         currentItems.add(0, item)
         publish(currentItems)
         persist()
-        if (targetStatus == DownloadStatus.Downloading) {
+        if (item.status == DownloadStatus.Downloading) {
             startDownload(item)
         }
 
@@ -352,60 +339,20 @@ object DownloadsRepository {
         }
     }
 
-    /** Records what is known about a title when no full details are cached, e.g. from a deep link. */
-    private fun storeBasicShowMetadata(
-        showId: String,
-        type: String,
-        title: String,
-        logo: String?,
-        poster: String?,
-        background: String?,
-        episode: StoredDownloadedVideoMeta?,
-    ) {
-        val existing = showMetadata[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title, type = type)
-        val hasEpisode = episode == null ||
-            existing.videos.any { it.season == episode.season && it.episode == episode.episode }
-        showMetadata[showId] = existing.copy(
-            logo = existing.logo ?: logo,
-            poster = existing.poster ?: poster,
-            background = existing.background ?: background,
-            videos = if (hasEpisode) existing.videos else existing.videos + episode!!,
-        )
-    }
-
+    /** Starts queued downloads until the concurrency limits or network policy stop it. */
     fun advanceDownloadQueue() {
         ensureLoaded()
-        val limits = currentDownloadLimits()
-
+        val policy = DownloadQueuePolicy.current()
         while (true) {
-            val currentItems = _uiState.value.items
-            val currentDownloading = currentItems.filter { it.status == DownloadStatus.Downloading }
-            if (currentDownloading.size >= limits.maxDownloads) break
-
-            val queuedItems = currentItems
-                .filter { it.status == DownloadStatus.Queued }
-                .sortedWith(
-                    compareBy<DownloadItem> { it.createdAtEpochMs }
-                        .thenBy { it.seasonNumber ?: 0 }
-                        .thenBy { it.episodeNumber ?: 0 }
-                        .thenBy { it.id }
-                )
-
-            val nextQueued = queuedItems.firstOrNull { candidate ->
-                canStartDownload(candidate.showKey, currentDownloading, limits)
-            } ?: break
-
-            mutateItem(nextQueued.id) { current ->
+            val next = policy.nextToStart(_uiState.value.items) ?: break
+            mutateItem(next.id) { current ->
                 current.copy(
                     status = DownloadStatus.Downloading,
                     updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                     errorMessage = null,
                 )
             }
-            val itemToStart = _uiState.value.items.firstOrNull { it.id == nextQueued.id }
-            if (itemToStart != null) {
-                startDownload(itemToStart)
-            }
+            _uiState.value.items.firstOrNull { it.id == next.id }?.let(::startDownload)
         }
     }
 
@@ -432,6 +379,18 @@ object DownloadsRepository {
         pauseActiveDownloadsMatching { true }
     }
 
+    /** Pauses the download if it is running or queued; otherwise resumes or retries it. */
+    fun togglePause(downloadId: String) {
+        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
+        if (item.isActive) pauseDownload(downloadId) else resumeDownload(downloadId)
+    }
+
+    /** Pauses every active episode of [showId], or resumes them all when none is active. */
+    fun toggleShowPause(showId: String) {
+        val isAnyActive = _uiState.value.items.any { it.parentMetaId == showId && it.isActive }
+        if (isAnyActive) pauseSeriesDownloads(showId) else resumeOrRetrySeriesDownloads(showId)
+    }
+
     fun pauseSeriesDownloads(seriesId: String) {
         pauseActiveDownloadsMatching { it.parentMetaId == seriesId }
     }
@@ -449,24 +408,20 @@ object DownloadsRepository {
             .forEach(::pauseDownload)
     }
 
-    fun resumeSeriesDownloads(seriesId: String) {
-        ensureLoaded()
-        val pausedItems = _uiState.value.items
-            .filter {
-                it.parentMetaId == seriesId &&
-                    (it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed)
-            }
-            .sortedForSeriesDownloads()
-
-        pausedItems.forEach { item ->
-            resumeDownload(item.id)
-        }
-    }
-
-    fun resumeAllPausedDownloads() {
+    /** Resumes paused episodes of [seriesId] and retries its failed ones. */
+    fun resumeOrRetrySeriesDownloads(seriesId: String) {
         ensureLoaded()
         _uiState.value.items
-            .filter { it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed }
+            .filter { it.parentMetaId == seriesId && it.isResumable }
+            .sortedForSeriesDownloads()
+            .forEach { resumeDownload(it.id) }
+    }
+
+    /** Resumes every paused download and retries every failed one. */
+    fun resumeOrRetryAllDownloads() {
+        ensureLoaded()
+        _uiState.value.items
+            .filter { it.isResumable }
             .map { it.id }
             .forEach(::resumeDownload)
     }
@@ -474,12 +429,11 @@ object DownloadsRepository {
     fun resumeDownload(downloadId: String) {
         ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (item.status != DownloadStatus.Paused && item.status != DownloadStatus.Failed) return
+        if (!item.isResumable) return
 
-        val canStart = canStartDownload(
+        val canStart = DownloadQueuePolicy.current().canStart(
             showKey = item.showKey,
             downloading = _uiState.value.items.filter { it.status == DownloadStatus.Downloading && it.id != downloadId },
-            limits = currentDownloadLimits(),
         )
 
         val newStatus = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued
@@ -507,20 +461,9 @@ object DownloadsRepository {
         downloadIds.forEach(::pauseDownload)
     }
 
-    fun resumeDownloads(downloadIds: Collection<String>) {
+    /** Resumes paused downloads and retries failed ones. */
+    fun resumeOrRetryDownloads(downloadIds: Collection<String>) {
         downloadIds.forEach(::resumeDownload)
-    }
-
-    fun retryDownloads(downloadIds: Collection<String>) {
-        downloadIds.forEach(::retryDownload)
-    }
-
-    fun retryAllFailedDownloads() {
-        ensureLoaded()
-        _uiState.value.items
-            .filter { it.status == DownloadStatus.Failed }
-            .map { it.id }
-            .forEach(::retryDownload)
     }
 
     fun cancelDownloads(downloadIds: Collection<String>) {
@@ -548,7 +491,7 @@ object DownloadsRepository {
 
         val remainingItems = _uiState.value.items.filterNot { it.id == downloadId }
         if (remainingItems.none { it.parentMetaId == item.parentMetaId }) {
-            showMetadata.remove(item.parentMetaId)
+            offlineMetadata.remove(item.parentMetaId)
         }
         publish(remainingItems)
         persist()
@@ -563,15 +506,14 @@ object DownloadsRepository {
         hasLoaded = true
         val payload = DownloadsStorage.loadPayload().orEmpty().trim()
         if (payload.isEmpty()) {
-            showMetadata.clear()
+            offlineMetadata.clear()
             _uiState.value = DownloadsUiState()
             notifyLiveStatusPlatform()
             return
         }
 
         val decoded = DownloadsCodec.decodePayload(payload)
-        showMetadata.clear()
-        showMetadata.putAll(decoded.showMetadata)
+        offlineMetadata.replaceAll(decoded.showMetadata)
 
         var shouldPersistNormalized = false
         val normalized = decoded.items
@@ -585,12 +527,14 @@ object DownloadsRepository {
                 localUriNormalized
             }
 
-        val limits = currentDownloadLimits()
+        // Downloads already running in the background keep going regardless of the network policy;
+        // only the concurrency limits can send them back to the queue.
+        val restorePolicy = DownloadQueuePolicy.current().copy(isNetworkAllowed = true)
         val keptDownloading = mutableListOf<DownloadItem>()
 
         val queuedNormalized = normalized.map { item ->
             if (item.status == DownloadStatus.Downloading) {
-                if (canStartDownload(item.showKey, keptDownloading, limits)) {
+                if (restorePolicy.canStart(item.showKey, keptDownloading)) {
                     keptDownloading += item
                     item
                 } else {
@@ -607,8 +551,9 @@ object DownloadsRepository {
         if (shouldPersistNormalized) {
             persist()
         }
-        val downloadingToStart = queuedNormalized.filter { it.status == DownloadStatus.Downloading && it.id !in activeHandles }
-        downloadingToStart.forEach { startDownload(it) }
+        queuedNormalized
+            .filter { it.status == DownloadStatus.Downloading && it.id !in activeHandles }
+            .forEach(::startDownload)
         advanceDownloadQueue()
     }
 
@@ -721,7 +666,7 @@ object DownloadsRepository {
 
     private fun persist() {
         DownloadsStorage.savePayload(
-            DownloadsCodec.encodeItems(_uiState.value.items, showMetadata),
+            DownloadsCodec.encodePayload(_uiState.value.items, offlineMetadata.snapshot()),
         )
     }
 
@@ -755,38 +700,6 @@ object DownloadsRepository {
             ) != null
 }
 
-private data class DownloadLimits(
-    val maxDownloads: Int,
-    val maxEpisodesPerShow: Int,
-    val maxShows: Int,
-)
-
-private fun currentDownloadLimits(): DownloadLimits {
-    DownloadsSettingsRepository.ensureLoaded()
-    return DownloadLimits(
-        maxDownloads = DownloadsSettingsRepository.maxDownloadConcurrency.value,
-        maxEpisodesPerShow = DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value,
-        maxShows = DownloadsSettingsRepository.maxConcurrentShows.value,
-    )
-}
-
-/** The show an episode download counts against for per-show limits; null for movies. */
-private val DownloadItem.showKey: String?
-    get() = parentMetaId.takeIf { isEpisode && it.isNotBlank() }
-
-/** Whether a download for [showKey] can start next to [downloading] without exceeding [limits]. */
-private fun canStartDownload(
-    showKey: String?,
-    downloading: List<DownloadItem>,
-    limits: DownloadLimits,
-): Boolean {
-    if (downloading.size >= limits.maxDownloads) return false
-    if (showKey == null) return true
-    val activeShows = downloading.mapNotNullTo(mutableSetOf()) { it.showKey }
-    if (showKey !in activeShows && activeShows.size >= limits.maxShows) return false
-    return downloading.count { it.showKey == showKey } < limits.maxEpisodesPerShow
-}
-
 @Serializable
 private data class StoredDownloadsPayload(
     val items: List<DownloadItem> = emptyList(),
@@ -804,9 +717,9 @@ private object DownloadsCodec {
             json.decodeFromString<StoredDownloadsPayload>(payload)
         }.getOrDefault(StoredDownloadsPayload())
 
-    fun encodeItems(
+    fun encodePayload(
         items: Collection<DownloadItem>,
-        showMetadata: Map<String, StoredDownloadedShowMeta> = emptyMap(),
+        showMetadata: Map<String, StoredDownloadedShowMeta>,
     ): String =
         json.encodeToString(
             StoredDownloadsPayload(

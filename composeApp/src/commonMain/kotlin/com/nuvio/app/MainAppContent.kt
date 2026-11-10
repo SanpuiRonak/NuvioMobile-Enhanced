@@ -1701,7 +1701,6 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
-                                onOpenDownloadsSettings = { navController.navigate(DownloadsSettingsRoute(downloadsTitle)) },
                                 onOpenDownload = ::openDownloadedItem,
                                 onOpenShowDetails = { showId, title ->
                                     navController.navigate(DetailRoute(type = "series", id = showId, title = title))
