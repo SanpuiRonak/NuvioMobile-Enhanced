@@ -282,6 +282,14 @@ internal fun settingsSearchEntries(
         pageLabel = downloadsPage,
         section = downloadsPage,
     )
+    addRow(
+        page = SettingsPage.Downloads,
+        key = "max-concurrent-shows",
+        title = stringResource(Res.string.downloads_max_concurrent_shows_title),
+        description = stringResource(Res.string.downloads_max_concurrent_shows_description),
+        pageLabel = downloadsPage,
+        section = downloadsPage,
+    )
     addPage(
         page = SettingsPage.Playback,
         key = "playback",

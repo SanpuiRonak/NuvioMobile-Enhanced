@@ -23,6 +23,8 @@ import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.downloads.DownloadSubtitles
+import com.nuvio.app.features.streams.DOWNLOADED_ADDON_ID
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
@@ -602,6 +604,7 @@ internal fun StreamDestination(
         forceExternal: Boolean,
         forceInternal: Boolean,
         saveForReuse: Boolean = true,
+        replaceStreamRoute: Boolean = false,
     ) {
         if (stream.needsServerPreparation) {
             if (preparingServerStream) return
@@ -622,6 +625,7 @@ internal fun StreamDestination(
                     resolvedResumeProgressFraction = resolvedResumeProgressFraction.takeIf { serverResumeMs == null },
                     forceExternal = false,
                     forceInternal = true,
+                    replaceStreamRoute = replaceStreamRoute,
                 )
             }
             return
@@ -643,6 +647,7 @@ internal fun StreamDestination(
                         resolvedResumeProgressFraction = resolvedResumeProgressFraction,
                         forceExternal = forceExternal,
                         forceInternal = forceInternal,
+                        replaceStreamRoute = replaceStreamRoute,
                     )
                     else -> {
                         resolved.toastMessage()?.let { NuvioToastController.show(it) }
@@ -668,7 +673,7 @@ internal fun StreamDestination(
                 resolvedResumeProgressFraction = resolvedResumeProgressFraction,
                 forceExternal = forceExternal,
                 forceInternal = forceInternal,
-                isAutoPlay = false,
+                isAutoPlay = replaceStreamRoute,
             )
             return
         }
@@ -690,6 +695,7 @@ internal fun StreamDestination(
                     forceInternal = forceInternal,
                     // The resolved URL expires after a few hours, so it isn't kept for reuse.
                     saveForReuse = false,
+                    replaceStreamRoute = replaceStreamRoute,
                 )
             }
             return
@@ -702,7 +708,7 @@ internal fun StreamDestination(
             return
         }
         val sourceUrl = stream.playableDirectUrl ?: return
-        if (saveForReuse && playerSettings.streamReuseLastLinkEnabled && stream.serverTarget == null) {
+        if (saveForReuse && playerSettings.streamReuseLastLinkEnabled && stream.serverTarget == null && stream.addonId != DOWNLOADED_ADDON_ID) {
             val cacheKey = StreamLinkCacheRepository.contentKey(
                 type = launch.type,
                 videoId = effectiveVideoId,
@@ -736,7 +742,11 @@ internal fun StreamDestination(
             sourceUrl = sourceUrl,
             sourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request),
             sourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response),
-            externalSubtitles = stream.externalSubtitles,
+            externalSubtitles = if (stream.addonId == DOWNLOADED_ADDON_ID) {
+                DownloadSubtitles.localSubtitles(sourceUrl)
+            } else {
+                stream.externalSubtitles
+            },
             streamType = stream.streamType,
             logo = launch.logo,
             poster = launch.poster,
@@ -775,12 +785,47 @@ internal fun StreamDestination(
         StreamsRepository.cancelLoading()
         navController.navigate(
             PlayerRoute(launchId = launchId, title = playerLaunch.title)
-        )
+        ) {
+            if (replaceStreamRoute) {
+                popUpTo<StreamRoute> { inclusive = true }
+            }
+        }
     }
 
     LaunchedEffect(reuseNavigated) {
         if (reuseNavigated) {
             StreamsRepository.setOverlayVisible(false)
+        }
+    }
+
+    var singleSourceAutoPlayHandled by rememberSaveable(launch.videoId, effectiveVideoId) { mutableStateOf(false) }
+    LaunchedEffect(
+        streamsUiState.isAnyLoading,
+        streamsUiState.groups,
+        streamsUiState.requestToken,
+        expectedStreamsRequestToken,
+        reuseHandled,
+        launch.downloadMode,
+    ) {
+        if (!reuseHandled) return@LaunchedEffect
+        if (reuseNavigated || autoPlayNavigationStarted || autoPlayHandled || singleSourceAutoPlayHandled) return@LaunchedEffect
+        if (launch.downloadMode) return@LaunchedEffect
+        if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
+        if (streamsUiState.isAnyLoading) return@LaunchedEffect
+
+        val allStreams = streamsUiState.groups.flatMap { it.streams }
+        if (allStreams.size == 1) {
+            val singleStream = allStreams.first()
+            singleSourceAutoPlayHandled = true
+            autoPlayNavigationStarted = true
+            openSelectedStream(
+                stream = singleStream,
+                resolvedResumePositionMs = launch.resumePositionMs,
+                resolvedResumeProgressFraction = launch.resumeProgressFraction,
+                forceExternal = false,
+                forceInternal = true,
+                replaceStreamRoute = true,
+            )
         }
     }
 
@@ -825,6 +870,50 @@ internal fun StreamDestination(
                 episodeNumber = launch.episodeNumber,
                 episodeTitle = launch.episodeTitle,
                 episodeThumbnail = launch.episodeThumbnail,
+                episodeOverview = launch.pauseDescription ?: run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.overview
+                },
+                episodeReleased = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.released
+                },
+                episodeRuntime = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.runtime
+                },
+                episodeImdbRating = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.imdbRating
+                },
+                episodeTmdbRating = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.tmdbRating
+                },
+                episodeRating = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.let { it.rating ?: it.tmdbRating ?: it.imdbRating }
+                },
+                seasonPoster = run {
+                    val m = MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)
+                    m?.videos?.firstOrNull { it.season == launch.seasonNumber && it.episode == launch.episodeNumber }?.seasonPoster
+                        ?: launch.seasonNumber?.let { m?.seasonPosters?.get(it) }
+                },
+                showDescription = run {
+                    MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)?.description
+                },
+                showGenres = run {
+                    MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)?.genres ?: emptyList()
+                },
+                showReleaseInfo = run {
+                    MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)?.releaseInfo
+                },
+                showImdbRating = run {
+                    MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)?.imdbRating
+                },
+                showStatus = run {
+                    MetaDetailsRepository.peek(launch.parentMetaType ?: launch.type, launch.parentMetaId ?: effectiveVideoId)?.status
+                },
                 resumePositionMs = launch.resumePositionMs,
                 resumeProgressFraction = launch.resumeProgressFraction,
                 manualSelection = launch.manualSelection,

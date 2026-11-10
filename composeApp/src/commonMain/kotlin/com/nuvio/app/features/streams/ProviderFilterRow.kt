@@ -131,7 +131,7 @@ internal fun rememberPinnedStreamSourceIds(): State<List<String>> {
 }
 
 internal fun AddonStreamGroup.soleSourcePin(): PinTarget? {
-    if (addonId.startsWith("debrid:")) return null
+    if (addonId.startsWith("debrid:") || addonId == DOWNLOADED_ADDON_ID) return null
     val playableStreams = streams.filterNot { it.isAddonDebridCandidate && it.isDirectDebridStream }
     val sourceNames = playableStreams
         .map { it.sourceName?.trim()?.takeIf(String::isNotEmpty) }

@@ -165,15 +165,20 @@ internal object DebridStreamMetadata {
     private val releaseGroupRegex = Regex("-([a-z0-9][a-z0-9._]{1,24})($|\\.)", RegexOption.IGNORE_CASE)
     private val nonAlphanumericRegex = Regex("[^a-z0-9]")
     private val nonAlphanumericOrPlusRegex = Regex("[^a-z0-9+]")
-    private val resolutionTokens = listOf(
-        resolutionRegex("2160p?", "4k", "uhd") to DebridStreamResolution.P2160,
-        resolutionRegex("1440p?", "2k") to DebridStreamResolution.P1440,
-        resolutionRegex("1080p?", "fhd") to DebridStreamResolution.P1080,
-        resolutionRegex("720p?", "hd") to DebridStreamResolution.P720,
-        resolutionRegex("576p?") to DebridStreamResolution.P576,
-        resolutionRegex("480p?", "sd") to DebridStreamResolution.P480,
-        resolutionRegex("360p?") to DebridStreamResolution.P360,
+    private val explicitResolutionTokens = listOf(
+        resolutionRegex("2160[pi]?", "4k", "uhd") to DebridStreamResolution.P2160,
+        resolutionRegex("1440[pi]?", "2k") to DebridStreamResolution.P1440,
+        resolutionRegex("1080[pi]?", "fhd") to DebridStreamResolution.P1080,
+        resolutionRegex("720[pi]?") to DebridStreamResolution.P720,
+        resolutionRegex("576[pi]?") to DebridStreamResolution.P576,
+        resolutionRegex("480[pi]?") to DebridStreamResolution.P480,
+        resolutionRegex("360[pi]?") to DebridStreamResolution.P360,
     )
+    private val genericQualityTokens = listOf(
+        resolutionRegex("hd") to DebridStreamResolution.P720,
+        resolutionRegex("sd") to DebridStreamResolution.P480,
+    )
+    private val resolutionTokens = explicitResolutionTokens + genericQualityTokens
 
     // Words release names use for each language besides its code. Short words that are common in
     // titles ("por", "chi", "fra") are left out so a title is not read as a language.
@@ -312,13 +317,44 @@ internal object DebridStreamMetadata {
         )
     }
 
-    private fun streamResolution(vararg values: String?): DebridStreamResolution =
-        values.firstNotNullOfOrNull { resolutionValue(it) } ?: DebridStreamResolution.UNKNOWN
+    internal fun streamResolution(
+        parsedResolution: String?,
+        parsedQuality: String?,
+        searchText: String,
+    ): DebridStreamResolution {
+        // 1. Explicit resolution marker in parsed resolution metadata (preserves genuine parsed resolution)
+        explicitResolutionValue(parsedResolution)?.let { return it }
 
-    private fun resolutionValue(value: String?): DebridStreamResolution? {
-        val normalized = value?.lowercase().orEmpty()
-        return resolutionTokens.firstOrNull { (regex, _) -> regex.containsMatchIn(normalized) }?.second
+        // 2. Explicit resolution marker in title / filename / stream search text
+        explicitResolutionValue(searchText)?.let { return it }
+
+        // 3. Explicit resolution marker in parsed quality (in case resolution was placed there)
+        explicitResolutionValue(parsedQuality)?.let { return it }
+
+        // 4. Fallback to generic quality labels (e.g. "HD" -> 720p, "SD" -> 480p)
+        return genericQualityResolutionValue(parsedResolution)
+            ?: genericQualityResolutionValue(parsedQuality)
+            ?: genericQualityResolutionValue(searchText)
+            ?: DebridStreamResolution.UNKNOWN
     }
+
+    internal fun streamResolution(vararg values: String?): DebridStreamResolution =
+        values.firstNotNullOfOrNull { explicitResolutionValue(it) }
+            ?: values.firstNotNullOfOrNull { genericQualityResolutionValue(it) }
+            ?: DebridStreamResolution.UNKNOWN
+
+    private fun explicitResolutionValue(value: String?): DebridStreamResolution? {
+        val normalized = value?.lowercase().orEmpty()
+        return explicitResolutionTokens.firstOrNull { (regex, _) -> regex.containsMatchIn(normalized) }?.second
+    }
+
+    private fun genericQualityResolutionValue(value: String?): DebridStreamResolution? {
+        val normalized = value?.lowercase().orEmpty()
+        return genericQualityTokens.firstOrNull { (regex, _) -> regex.containsMatchIn(normalized) }?.second
+    }
+
+    private fun resolutionValue(value: String?): DebridStreamResolution? =
+        explicitResolutionValue(value) ?: genericQualityResolutionValue(value)
 
     private fun streamQuality(parsedQuality: String?, searchText: String): DebridStreamQuality {
         val text = listOfNotNull(parsedQuality, searchText).joinToString(" ").lowercase()

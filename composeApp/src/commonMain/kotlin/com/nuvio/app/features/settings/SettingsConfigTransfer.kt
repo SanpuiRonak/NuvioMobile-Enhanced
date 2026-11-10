@@ -35,6 +35,7 @@ import com.nuvio.app.features.discord.DiscordRpcActivityType
 import com.nuvio.app.features.discord.DiscordRpcRepository
 import com.nuvio.app.features.discord.DiscordRpcSettings
 import com.nuvio.app.features.discord.DiscordRpcStatus
+import com.nuvio.app.features.downloads.DownloadPreferredResolution
 import com.nuvio.app.features.downloads.DownloadsSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsSyncService
@@ -450,6 +451,10 @@ internal object SettingsConfigTransfer {
         put("episode_release_alerts_enabled", EpisodeReleaseNotificationsRepository.uiState.value.isEnabled)
         put("allow_mobile_data_downloads", DownloadsSettingsRepository.allowMobileDataDownloads.value)
         put("show_download_button", DownloadsSettingsRepository.showDownloadButton.value)
+        put("preferred_download_resolution", DownloadsSettingsRepository.preferredResolution.value.name)
+        put("max_download_concurrency", DownloadsSettingsRepository.maxDownloadConcurrency.value)
+        put("max_series_episode_concurrency", DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value)
+        put("max_concurrent_shows", DownloadsSettingsRepository.maxConcurrentShows.value)
         put("search_history_enabled", SearchHistoryRepository.enabled.value)
         if (DnsSettingsRepository.isSupported) {
             put("dns_provider", DnsSettingsRepository.provider.value.storageId)
@@ -463,6 +468,12 @@ internal object SettingsConfigTransfer {
         payload.boolean("episode_release_alerts_enabled")?.let(EpisodeReleaseNotificationsRepository::applyFromSyncEnabled)
         payload.boolean("allow_mobile_data_downloads")?.let(DownloadsSettingsRepository::setAllowMobileDataDownloads)
         payload.boolean("show_download_button")?.let(DownloadsSettingsRepository::setShowDownloadButton)
+        payload.string("preferred_download_resolution")?.let {
+            DownloadsSettingsRepository.setPreferredResolution(DownloadPreferredResolution.fromStorage(it))
+        }
+        payload.int("max_download_concurrency")?.let(DownloadsSettingsRepository::setMaxDownloadConcurrency)
+        payload.int("max_series_episode_concurrency")?.let(DownloadsSettingsRepository::setMaxSeriesEpisodeConcurrency)
+        payload.int("max_concurrent_shows")?.let(DownloadsSettingsRepository::setMaxConcurrentShows)
         payload.boolean("search_history_enabled")?.let(SearchHistoryRepository::setEnabled)
         if (DnsSettingsRepository.isSupported) {
             payload.string("dns_provider")?.let { DnsSettingsRepository.setProvider(DnsProvider.fromStorage(it)) }

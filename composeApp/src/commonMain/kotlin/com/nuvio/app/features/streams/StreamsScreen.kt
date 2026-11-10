@@ -132,6 +132,18 @@ fun StreamsScreen(
     episodeNumber: Int? = null,
     episodeTitle: String? = null,
     episodeThumbnail: String? = null,
+    episodeOverview: String? = null,
+    episodeReleased: String? = null,
+    episodeRuntime: Int? = null,
+    episodeImdbRating: Double? = null,
+    episodeTmdbRating: Double? = null,
+    episodeRating: Double? = null,
+    seasonPoster: String? = null,
+    showDescription: String? = null,
+    showGenres: List<String> = emptyList(),
+    showReleaseInfo: String? = null,
+    showImdbRating: String? = null,
+    showStatus: String? = null,
     resumePositionMs: Long? = null,
     resumeProgressFraction: Float? = null,
     manualSelection: Boolean = false,
@@ -175,9 +187,7 @@ fun StreamsScreen(
         WatchedRepository.ensureLoaded()
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
-    remember {
-        DownloadsRepository.ensureLoaded()
-    }
+    remember { DownloadsRepository.ensureLoaded() }
     val isEpisode = seasonNumber != null && episodeNumber != null
     val clipboardManager = LocalClipboardManager.current
     val streamLinkCopiedText = stringResource(Res.string.streams_link_copied)
@@ -275,6 +285,18 @@ fun StreamsScreen(
                                 episodeTitle = episodeTitle,
                                 episodeThumbnail = episodeThumbnail,
                                 stream = resolved.stream,
+                                episodeOverview = episodeOverview,
+                                episodeReleased = episodeReleased,
+                                episodeRuntime = episodeRuntime,
+                                episodeImdbRating = episodeImdbRating,
+                                episodeTmdbRating = episodeTmdbRating,
+                                episodeRating = episodeRating,
+                                seasonPoster = seasonPoster,
+                                showDescription = showDescription,
+                                showGenres = showGenres,
+                                showReleaseInfo = showReleaseInfo,
+                                showImdbRating = showImdbRating,
+                                showStatus = showStatus,
                             )
                             NuvioToastController.show(result.toastMessage())
                         }
@@ -301,6 +323,18 @@ fun StreamsScreen(
                     episodeTitle = episodeTitle,
                     episodeThumbnail = episodeThumbnail,
                     stream = stream,
+                    episodeOverview = episodeOverview,
+                    episodeReleased = episodeReleased,
+                    episodeRuntime = episodeRuntime,
+                    episodeImdbRating = episodeImdbRating,
+                    episodeTmdbRating = episodeTmdbRating,
+                    episodeRating = episodeRating,
+                    seasonPoster = seasonPoster,
+                    showDescription = showDescription,
+                    showGenres = showGenres,
+                    showReleaseInfo = showReleaseInfo,
+                    showImdbRating = showImdbRating,
+                    showStatus = showStatus,
                 )
                 NuvioToastController.show(result.toastMessage())
             }
@@ -959,6 +993,7 @@ private fun LazyListScope.streamSection(
                 )
             },
         ) { _, stream ->
+            val isDownloaded = stream.addonId == DOWNLOADED_ADDON_ID
             val isSelectable = stream.isSelectableForPlayback(debridEnabled)
             val isUnsupportedTorrentStream =
                 stream.needsLocalDebridResolve &&
@@ -966,13 +1001,16 @@ private fun LazyListScope.streamSection(
                     !(debridEnabled && stream.isAddonDebridCandidate)
             StreamCard(
                 stream = stream,
-                enabled = isSelectable || isUnsupportedTorrentStream,
+                enabled = isSelectable || isUnsupportedTorrentStream || isDownloaded,
                 appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
                 showFileSizeBadges = showFileSizeBadges,
                 showAddonLogo = showAddonLogo,
                 badgePlacement = badgePlacement,
+                isCurrent = isDownloaded,
+                currentLabel = if (isDownloaded) stringResource(Res.string.provider_downloaded) else null,
+                outlined = isDownloaded,
                 onClick = {
-                    if (isSelectable) {
+                    if (isSelectable || isDownloaded) {
                         onStreamSelected(stream, resumePositionMs, resumeProgressFraction)
                     } else if (isUnsupportedTorrentStream) {
                         NuvioToastController.show(torrentNotSupportedText)
@@ -998,7 +1036,8 @@ internal fun splitPinnedSources(
     groups: List<AddonStreamGroup>,
     pinnedSourceIds: List<String>,
 ): PinnedFirstStreamGroups {
-    if (pinnedSourceIds.isEmpty()) return PinnedFirstStreamGroups(emptyList(), groups)
+    val (downloaded, nonDownloaded) = groups.partition { it.addonId == DOWNLOADED_ADDON_ID }
+    if (pinnedSourceIds.isEmpty()) return PinnedFirstStreamGroups(downloaded, nonDownloaded)
 
     val pinnedRank = HashMap<String, Int>(pinnedSourceIds.size)
     pinnedSourceIds.forEachIndexed { index, key ->
@@ -1008,7 +1047,7 @@ internal fun splitPinnedSources(
     val pinned = mutableListOf<Pair<Int, AddonStreamGroup>>()
     val remaining = mutableListOf<AddonStreamGroup>()
 
-    groups.forEach { group ->
+    nonDownloaded.forEach { group ->
         val isDebridGroup = group.addonId.startsWith("debrid:")
         val pinnedStreams = if (isDebridGroup) {
             emptyMap()
@@ -1047,7 +1086,7 @@ internal fun splitPinnedSources(
     }
 
     return PinnedFirstStreamGroups(
-        pinnedGroups = pinned.sortedBy { it.first }.map { it.second },
+        pinnedGroups = downloaded + pinned.sortedBy { it.first }.map { it.second },
         remainingGroups = remaining,
     )
 }
@@ -1287,16 +1326,18 @@ private fun StreamActionsSheet(
                     }
                 },
             )
-            NuvioBottomSheetActionRow(
-                icon = Icons.Rounded.Download,
-                title = stringResource(Res.string.streams_download_file),
-                onClick = {
-                    onDownload(stream)
-                    coroutineScope.launch {
-                        dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
-                    }
-                },
-            )
+            if (stream.addonId != DOWNLOADED_ADDON_ID) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Rounded.Download,
+                    title = stringResource(Res.string.streams_download_file),
+                    onClick = {
+                        onDownload(stream)
+                        coroutineScope.launch {
+                            dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                        }
+                    },
+                )
+            }
         }
     }
 }

@@ -206,6 +206,7 @@ object ProfileRepository {
         CollectionRepository.onProfileChanged()
         CollectionMobileSettingsRepository.onProfileChanged()
         DownloadsRepository.onProfileChanged()
+        com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator.onProfileChanged()
         ServerRepository.onProfileChanged()
         ProfileSettingsSync.onProfileChanged()
     }

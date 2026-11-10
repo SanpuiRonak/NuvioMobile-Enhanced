@@ -1,5 +1,7 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.player.SubtitleRequestExtras
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
@@ -23,6 +25,7 @@ object DownloadsRepository {
     val hasUnseenCompleted: StateFlow<Boolean> = _hasUnseenCompleted.asStateFlow()
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
+    private val showMetadata = mutableMapOf<String, StoredDownloadedShowMeta>()
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
 
@@ -44,8 +47,186 @@ object DownloadsRepository {
         activeHandles.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
+        showMetadata.clear()
         _uiState.value = DownloadsUiState()
         notifyLiveStatusPlatform()
+    }
+
+    fun getShowMetadata(showId: String): StoredDownloadedShowMeta? {
+        ensureLoaded()
+        return showMetadata[showId]
+    }
+
+    fun getSavedMetaDetails(showId: String): MetaDetails? {
+        ensureLoaded()
+        val meta = showMetadata[showId]
+        val items = _uiState.value.items.filter { it.parentMetaId == showId }
+        if (meta == null && items.isEmpty()) return null
+        return if (meta != null) {
+            meta.toMetaDetails()
+        } else {
+            items.toOfflineMetaDetails(showId, null)
+        }
+    }
+
+    fun hasDownloadsFor(showId: String): Boolean {
+        ensureLoaded()
+        return _uiState.value.items.any { it.parentMetaId == showId }
+    }
+
+    fun isEpisodeDownloaded(
+        parentMetaId: String,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        videoId: String? = null,
+    ): Boolean {
+        ensureLoaded()
+        return findPlayableDownload(
+            parentMetaId = parentMetaId,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            videoId = videoId,
+        ) != null
+    }
+
+    fun findEpisodeDownload(
+        parentMetaId: String,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
+        videoId: String? = null,
+    ): DownloadItem? {
+        ensureLoaded()
+        val items = _uiState.value.items
+        val normalizedParentMetaId = parentMetaId.trim()
+        val normalizedVideoId = videoId?.trim().orEmpty()
+
+        val matching = items.filter { item ->
+            (normalizedVideoId.isNotBlank() && item.videoId == normalizedVideoId) ||
+                (seasonNumber != null && episodeNumber != null &&
+                    item.parentMetaId == normalizedParentMetaId &&
+                    item.seasonNumber == seasonNumber &&
+                    item.episodeNumber == episodeNumber) ||
+                (seasonNumber == null && episodeNumber == null &&
+                    item.parentMetaId == normalizedParentMetaId &&
+                    item.seasonNumber == null &&
+                    item.episodeNumber == null)
+        }
+
+        return matching.firstOrNull { it.status == DownloadStatus.Downloading }
+            ?: matching.firstOrNull { it.status == DownloadStatus.Queued }
+            ?: matching.firstOrNull { it.status == DownloadStatus.Completed && it.hasPlayableLocalFile() }
+            ?: matching.firstOrNull { it.status == DownloadStatus.Completed }
+            ?: matching.firstOrNull()
+    }
+
+    fun saveShowMetadata(meta: StoredDownloadedShowMeta) {
+        ensureLoaded()
+        showMetadata[meta.showId] = meta
+        persist()
+    }
+
+    fun updateShowMetadataFromMetaDetails(meta: MetaDetails) {
+        ensureLoaded()
+        val existing = showMetadata[meta.id]
+        val videosToSave = if (meta.videos.isNotEmpty()) {
+            meta.videos.map { it.toStored() }
+        } else {
+            existing?.videos ?: emptyList()
+        }
+        val castToSave = if (meta.cast.isNotEmpty()) {
+            meta.cast.map { it.toStored() }
+        } else {
+            existing?.cast ?: emptyList()
+        }
+        val updated = StoredDownloadedShowMeta(
+            showId = meta.id,
+            title = meta.name,
+            type = meta.type,
+            poster = meta.poster ?: existing?.poster,
+            background = meta.background ?: existing?.background,
+            logo = meta.logo ?: existing?.logo,
+            description = meta.description ?: existing?.description,
+            releaseInfo = meta.releaseInfo ?: existing?.releaseInfo,
+            status = meta.status ?: existing?.status,
+            imdbRating = meta.imdbRating ?: existing?.imdbRating,
+            genres = meta.genres.takeIf { it.isNotEmpty() } ?: existing?.genres ?: emptyList(),
+            seasonPosters = (existing?.seasonPosters.orEmpty() + meta.seasonPosters),
+            videos = videosToSave,
+            cast = castToSave,
+        )
+        showMetadata[meta.id] = updated
+
+        var changed = false
+        val currentItems = _uiState.value.items.map { item ->
+            if (item.parentMetaId == meta.id && item.isEpisode) {
+                val video = meta.videos.firstOrNull {
+                    it.season == item.seasonNumber && it.episode == item.episodeNumber
+                }
+                var updatedItem = item
+                if (item.showDescription == null && meta.description != null) {
+                    updatedItem = updatedItem.copy(showDescription = meta.description)
+                    changed = true
+                }
+                if (item.showGenres.isEmpty() && meta.genres.isNotEmpty()) {
+                    updatedItem = updatedItem.copy(showGenres = meta.genres)
+                    changed = true
+                }
+                if (item.showReleaseInfo == null && meta.releaseInfo != null) {
+                    updatedItem = updatedItem.copy(showReleaseInfo = meta.releaseInfo)
+                    changed = true
+                }
+                if (item.showImdbRating == null && meta.imdbRating != null) {
+                    updatedItem = updatedItem.copy(showImdbRating = meta.imdbRating)
+                    changed = true
+                }
+                if (item.showStatus == null && meta.status != null) {
+                    updatedItem = updatedItem.copy(showStatus = meta.status)
+                    changed = true
+                }
+                if (video != null) {
+                    if (item.episodeOverview == null && video.overview != null) {
+                        updatedItem = updatedItem.copy(episodeOverview = video.overview)
+                        changed = true
+                    }
+                    if (item.episodeReleased == null && video.released != null) {
+                        updatedItem = updatedItem.copy(episodeReleased = video.released)
+                        changed = true
+                    }
+                    if (item.episodeRuntime == null && video.runtime != null) {
+                        updatedItem = updatedItem.copy(episodeRuntime = video.runtime)
+                        changed = true
+                    }
+                    if (item.episodeImdbRating == null && video.imdbRating != null) {
+                        updatedItem = updatedItem.copy(episodeImdbRating = video.imdbRating)
+                        changed = true
+                    }
+                    if (item.episodeTmdbRating == null && video.tmdbRating != null) {
+                        updatedItem = updatedItem.copy(episodeTmdbRating = video.tmdbRating)
+                        changed = true
+                    }
+                    if (item.episodeRating == null && video.rating != null) {
+                        updatedItem = updatedItem.copy(episodeRating = video.rating)
+                        changed = true
+                    }
+                    val seasonPoster = video.seasonPoster ?: meta.seasonPosters[item.seasonNumber]
+                    if (item.seasonPoster == null && seasonPoster != null) {
+                        updatedItem = updatedItem.copy(seasonPoster = seasonPoster)
+                        changed = true
+                    }
+                    if (item.episodeThumbnail == null && video.thumbnail != null) {
+                        updatedItem = updatedItem.copy(episodeThumbnail = video.thumbnail)
+                        changed = true
+                    }
+                }
+                updatedItem
+            } else {
+                item
+            }
+        }
+        if (changed) {
+            publish(currentItems)
+        }
+        persist()
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -124,6 +305,18 @@ object DownloadsRepository {
         episodeTitle: String?,
         episodeThumbnail: String?,
         stream: StreamItem,
+        episodeOverview: String? = null,
+        episodeReleased: String? = null,
+        episodeRuntime: Int? = null,
+        episodeImdbRating: Double? = null,
+        episodeTmdbRating: Double? = null,
+        episodeRating: Double? = null,
+        seasonPoster: String? = null,
+        showDescription: String? = null,
+        showGenres: List<String> = emptyList(),
+        showReleaseInfo: String? = null,
+        showImdbRating: String? = null,
+        showStatus: String? = null,
     ): DownloadEnqueueResult {
         ensureLoaded()
 
@@ -142,6 +335,47 @@ object DownloadsRepository {
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
         )
+
+        val cachedMeta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+        val cachedVideo = cachedMeta?.videos?.firstOrNull {
+            it.season == seasonNumber && it.episode == episodeNumber
+        }
+
+        val resolvedEpisodeOverview = episodeOverview ?: cachedVideo?.overview
+        val resolvedEpisodeReleased = episodeReleased ?: cachedVideo?.released
+        val resolvedEpisodeRuntime = episodeRuntime ?: cachedVideo?.runtime
+        val resolvedEpisodeImdbRating = episodeImdbRating ?: cachedVideo?.imdbRating
+        val resolvedEpisodeTmdbRating = episodeTmdbRating ?: cachedVideo?.tmdbRating
+        val resolvedEpisodeRating = episodeRating ?: cachedVideo?.rating ?: cachedVideo?.tmdbRating ?: cachedVideo?.imdbRating
+        val resolvedSeasonPoster = seasonPoster ?: cachedVideo?.seasonPoster ?: cachedMeta?.seasonPosters?.get(seasonNumber ?: 1)
+        val resolvedEpisodeThumbnail = episodeThumbnail ?: cachedVideo?.thumbnail
+
+        val resolvedShowDescription = showDescription ?: cachedMeta?.description
+        val resolvedShowGenres = showGenres.takeIf { it.isNotEmpty() } ?: cachedMeta?.genres ?: emptyList()
+        val resolvedShowReleaseInfo = showReleaseInfo ?: cachedMeta?.releaseInfo
+        val resolvedShowImdbRating = showImdbRating ?: cachedMeta?.imdbRating
+        val resolvedShowStatus = showStatus ?: cachedMeta?.status
+
+        // Cache show metadata offline
+        if (cachedMeta != null) {
+            updateShowMetadataFromMetaDetails(cachedMeta)
+        } else {
+            val existing = showMetadata[parentMetaId]
+            showMetadata[parentMetaId] = StoredDownloadedShowMeta(
+                showId = parentMetaId,
+                title = title,
+                type = parentMetaType,
+                poster = poster ?: existing?.poster,
+                background = background ?: existing?.background,
+                logo = logo ?: existing?.logo,
+                description = resolvedShowDescription ?: existing?.description,
+                releaseInfo = resolvedShowReleaseInfo ?: existing?.releaseInfo,
+                status = resolvedShowStatus ?: existing?.status,
+                imdbRating = resolvedShowImdbRating ?: existing?.imdbRating,
+                genres = resolvedShowGenres.takeIf { it.isNotEmpty() } ?: existing?.genres ?: emptyList(),
+                seasonPosters = resolvedSeasonPoster?.let { mapOf((seasonNumber ?: 1) to it) } ?: existing?.seasonPosters ?: emptyMap(),
+            )
+        }
 
         var replacedExisting = false
         val currentItems = _uiState.value.items.toMutableList()
@@ -165,6 +399,25 @@ object DownloadsRepository {
             downloadId = downloadId,
         )
 
+        val isSeriesEpisode = seasonNumber != null && episodeNumber != null && parentMetaId.isNotBlank()
+        DownloadsSettingsRepository.ensureLoaded()
+        val maxConcurrent = DownloadsSettingsRepository.maxDownloadConcurrency.value
+        val maxSeriesConcurrent = DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value
+        val maxShows = DownloadsSettingsRepository.maxConcurrentShows.value
+        val currentDownloading = _uiState.value.items.filter { it.status == DownloadStatus.Downloading }
+        val activeShows = currentDownloading
+            .filter { it.isEpisode && it.parentMetaId.isNotBlank() }
+            .map { it.parentMetaId }
+            .distinct()
+
+        val canStart = currentDownloading.size < maxConcurrent &&
+            (!isSeriesEpisode || (
+                (parentMetaId in activeShows || activeShows.size < maxShows) &&
+                currentDownloading.count { it.isEpisode && it.parentMetaId == parentMetaId } < maxSeriesConcurrent
+            ))
+
+        val targetStatus = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued
+
         val item = DownloadItem(
             id = downloadId,
             contentType = contentType,
@@ -178,7 +431,7 @@ object DownloadsRepository {
             seasonNumber = seasonNumber,
             episodeNumber = episodeNumber,
             episodeTitle = episodeTitle,
-            episodeThumbnail = episodeThumbnail,
+            episodeThumbnail = resolvedEpisodeThumbnail,
             streamTitle = stream.streamLabel,
             streamSubtitle = stream.streamSubtitle,
             providerName = stream.addonName,
@@ -194,18 +447,32 @@ object DownloadsRepository {
             sourceSubtitles = stream.externalSubtitles,
             localFileUri = null,
             fileName = fileName,
-            status = DownloadStatus.Downloading,
+            status = targetStatus,
             downloadedBytes = 0L,
             totalBytes = null,
             errorMessage = null,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
+            episodeOverview = resolvedEpisodeOverview,
+            episodeReleased = resolvedEpisodeReleased,
+            episodeRuntime = resolvedEpisodeRuntime,
+            episodeImdbRating = resolvedEpisodeImdbRating,
+            episodeTmdbRating = resolvedEpisodeTmdbRating,
+            episodeRating = resolvedEpisodeRating,
+            seasonPoster = resolvedSeasonPoster,
+            showDescription = resolvedShowDescription,
+            showGenres = resolvedShowGenres,
+            showReleaseInfo = resolvedShowReleaseInfo,
+            showImdbRating = resolvedShowImdbRating,
+            showStatus = resolvedShowStatus,
         )
 
         currentItems.add(0, item)
         publish(currentItems)
         persist()
-        startDownload(item)
+        if (targetStatus == DownloadStatus.Downloading) {
+            startDownload(item)
+        }
 
         return if (replacedExisting) {
             DownloadEnqueueResult.Replaced
@@ -214,11 +481,67 @@ object DownloadsRepository {
         }
     }
 
+    fun advanceDownloadQueue() {
+        ensureLoaded()
+        DownloadsSettingsRepository.ensureLoaded()
+        val maxConcurrent = DownloadsSettingsRepository.maxDownloadConcurrency.value
+        val maxSeriesConcurrent = DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value
+        val maxShows = DownloadsSettingsRepository.maxConcurrentShows.value
+
+        while (true) {
+            val currentItems = _uiState.value.items
+            val currentDownloading = currentItems.filter { it.status == DownloadStatus.Downloading }
+            if (currentDownloading.size >= maxConcurrent) break
+
+            val activeShows = currentDownloading
+                .filter { it.isEpisode && it.parentMetaId.isNotBlank() }
+                .map { it.parentMetaId }
+                .distinct()
+
+            val queuedItems = currentItems
+                .filter { it.status == DownloadStatus.Queued }
+                .sortedWith(
+                    compareBy<DownloadItem> { it.createdAtEpochMs }
+                        .thenBy { it.seasonNumber ?: 0 }
+                        .thenBy { it.episodeNumber ?: 0 }
+                        .thenBy { it.id }
+                )
+
+            val nextQueued = queuedItems.firstOrNull { candidate ->
+                if (candidate.isEpisode && candidate.parentMetaId.isNotBlank()) {
+                    val isAlreadyActiveShow = candidate.parentMetaId in activeShows
+                    if (!isAlreadyActiveShow && activeShows.size >= maxShows) {
+                        return@firstOrNull false
+                    }
+                    val seriesDownloadingCount = currentDownloading.count {
+                        it.isEpisode && it.parentMetaId == candidate.parentMetaId
+                    }
+                    seriesDownloadingCount < maxSeriesConcurrent
+                } else {
+                    true
+                }
+            } ?: break
+
+            mutateItem(nextQueued.id) { current ->
+                current.copy(
+                    status = DownloadStatus.Downloading,
+                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                    errorMessage = null,
+                )
+            }
+            val itemToStart = _uiState.value.items.firstOrNull { it.id == nextQueued.id }
+            if (itemToStart != null) {
+                startDownload(itemToStart)
+            }
+        }
+    }
+
     fun pauseDownload(downloadId: String) {
         ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (item.status != DownloadStatus.Downloading) return
+        if (item.status != DownloadStatus.Downloading && item.status != DownloadStatus.Queued) return
 
+        val wasDownloading = item.status == DownloadStatus.Downloading
         activeHandles.remove(downloadId)?.cancel()
         mutateItem(downloadId) { current ->
             current.copy(
@@ -227,14 +550,75 @@ object DownloadsRepository {
                 errorMessage = null,
             )
         }
+        if (wasDownloading) {
+            advanceDownloadQueue()
+        }
     }
 
     fun pauseActiveDownloads() {
         ensureLoaded()
         _uiState.value.items
-            .filter { it.status == DownloadStatus.Downloading }
+            .filter { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued }
             .map { it.id }
             .forEach(::pauseDownload)
+    }
+
+    fun pauseSeriesDownloads(seriesId: String) {
+        ensureLoaded()
+        val seriesItems = _uiState.value.items.filter {
+            it.parentMetaId == seriesId &&
+                (it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued)
+        }
+        if (seriesItems.isEmpty()) return
+
+        val queuedIds = seriesItems.filter { it.status == DownloadStatus.Queued }.map { it.id }
+        queuedIds.forEach { id ->
+            mutateItem(id) { current ->
+                current.copy(
+                    status = DownloadStatus.Paused,
+                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                    errorMessage = null,
+                )
+            }
+        }
+
+        val downloadingIds = seriesItems.filter { it.status == DownloadStatus.Downloading }.map { it.id }
+        downloadingIds.forEach { id ->
+            activeHandles.remove(id)?.cancel()
+            mutateItem(id) { current ->
+                current.copy(
+                    status = DownloadStatus.Paused,
+                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                    errorMessage = null,
+                )
+            }
+        }
+
+        if (downloadingIds.isNotEmpty()) {
+            advanceDownloadQueue()
+        }
+    }
+
+    fun resumeSeriesDownloads(seriesId: String) {
+        ensureLoaded()
+        val pausedItems = _uiState.value.items
+            .filter {
+                it.parentMetaId == seriesId &&
+                    (it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed)
+            }
+            .sortedForSeriesDownloads()
+
+        pausedItems.forEach { item ->
+            resumeDownload(item.id)
+        }
+    }
+
+    fun resumeAllPausedDownloads() {
+        ensureLoaded()
+        _uiState.value.items
+            .filter { it.status == DownloadStatus.Paused || it.status == DownloadStatus.Failed }
+            .map { it.id }
+            .forEach(::resumeDownload)
     }
 
     fun resumeDownload(downloadId: String) {
@@ -242,8 +626,27 @@ object DownloadsRepository {
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
         if (item.status != DownloadStatus.Paused && item.status != DownloadStatus.Failed) return
 
+        DownloadsSettingsRepository.ensureLoaded()
+        val maxConcurrent = DownloadsSettingsRepository.maxDownloadConcurrency.value
+        val maxSeriesConcurrent = DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value
+        val maxShows = DownloadsSettingsRepository.maxConcurrentShows.value
+        val currentDownloading = _uiState.value.items.filter { it.status == DownloadStatus.Downloading && it.id != downloadId }
+        val activeShows = currentDownloading
+            .filter { it.isEpisode && it.parentMetaId.isNotBlank() }
+            .map { it.parentMetaId }
+            .distinct()
+
+        val isSeriesEpisode = item.isEpisode && item.parentMetaId.isNotBlank()
+        val canStart = currentDownloading.size < maxConcurrent &&
+            (!isSeriesEpisode || (
+                (item.parentMetaId in activeShows || activeShows.size < maxShows) &&
+                currentDownloading.count { it.isEpisode && it.parentMetaId == item.parentMetaId } < maxSeriesConcurrent
+            ))
+
+        val newStatus = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued
+
         val reset = item.copy(
-            status = DownloadStatus.Downloading,
+            status = newStatus,
             errorMessage = null,
             localFileUri = null,
             updatedAtEpochMs = DownloadsClock.nowEpochMs(),
@@ -251,11 +654,38 @@ object DownloadsRepository {
 
         replaceItem(reset)
         persist()
-        startDownload(reset)
+        if (newStatus == DownloadStatus.Downloading) {
+            startDownload(reset)
+        }
+        advanceDownloadQueue()
     }
 
     fun retryDownload(downloadId: String) {
         resumeDownload(downloadId)
+    }
+
+    fun pauseDownloads(downloadIds: Collection<String>) {
+        downloadIds.forEach(::pauseDownload)
+    }
+
+    fun resumeDownloads(downloadIds: Collection<String>) {
+        downloadIds.forEach(::resumeDownload)
+    }
+
+    fun retryDownloads(downloadIds: Collection<String>) {
+        downloadIds.forEach(::retryDownload)
+    }
+
+    fun retryAllFailedDownloads() {
+        ensureLoaded()
+        _uiState.value.items
+            .filter { it.status == DownloadStatus.Failed }
+            .map { it.id }
+            .forEach(::retryDownload)
+    }
+
+    fun cancelDownloads(downloadIds: Collection<String>) {
+        downloadIds.forEach(::cancelDownload)
     }
 
     internal fun reattachBackgroundDownload(downloadId: String) {
@@ -271,6 +701,7 @@ object DownloadsRepository {
     fun cancelDownload(downloadId: String) {
         ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
+        val wasDownloading = item.status == DownloadStatus.Downloading
 
         activeHandles.remove(downloadId)?.cancel()
         DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
@@ -278,6 +709,10 @@ object DownloadsRepository {
 
         publish(_uiState.value.items.filterNot { it.id == downloadId })
         persist()
+
+        if (wasDownloading) {
+            advanceDownloadQueue()
+        }
     }
 
     private fun loadFromDisk() {
@@ -285,13 +720,18 @@ object DownloadsRepository {
         hasLoaded = true
         val payload = DownloadsStorage.loadPayload().orEmpty().trim()
         if (payload.isEmpty()) {
+            showMetadata.clear()
             _uiState.value = DownloadsUiState()
             notifyLiveStatusPlatform()
             return
         }
 
+        val decoded = DownloadsCodec.decodePayload(payload)
+        showMetadata.clear()
+        showMetadata.putAll(decoded.showMetadata)
+
         var shouldPersistNormalized = false
-        val normalized = DownloadsCodec.decodeItems(payload)
+        val normalized = decoded.items
             .map { item ->
                 val statusNormalized = DownloadsPlatformDownloader.restoreItem(item)
 
@@ -302,13 +742,44 @@ object DownloadsRepository {
                 localUriNormalized
             }
 
-        _uiState.value = DownloadsUiState(normalized)
+        DownloadsSettingsRepository.ensureLoaded()
+        val maxConcurrent = DownloadsSettingsRepository.maxDownloadConcurrency.value
+        val maxSeriesConcurrent = DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.value
+        val maxShows = DownloadsSettingsRepository.maxConcurrentShows.value
+
+        var activeStartedCount = 0
+        val activeSeriesCounts = mutableMapOf<String, Int>()
+
+        val queuedNormalized = normalized.map { item ->
+            if (item.status == DownloadStatus.Downloading) {
+                val seriesKey = if (item.isEpisode && item.parentMetaId.isNotBlank()) item.parentMetaId else null
+                val seriesCount = if (seriesKey != null) activeSeriesCounts.getOrElse(seriesKey) { 0 } else 0
+                val canStartShow = seriesKey == null || seriesKey in activeSeriesCounts || activeSeriesCounts.size < maxShows
+                val canKeepDownloading = activeStartedCount < maxConcurrent &&
+                    canStartShow &&
+                    (seriesKey == null || seriesCount < maxSeriesConcurrent)
+
+                if (canKeepDownloading) {
+                    activeStartedCount++
+                    if (seriesKey != null) activeSeriesCounts[seriesKey] = seriesCount + 1
+                    item
+                } else {
+                    shouldPersistNormalized = true
+                    item.copy(status = DownloadStatus.Queued)
+                }
+            } else {
+                item
+            }
+        }
+
+        _uiState.value = DownloadsUiState(queuedNormalized)
         notifyLiveStatusPlatform()
         if (shouldPersistNormalized) {
             persist()
         }
-        normalized.filter { it.status == DownloadStatus.Downloading && it.id !in activeHandles }
-            .forEach(::startDownload)
+        val downloadingToStart = queuedNormalized.filter { it.status == DownloadStatus.Downloading && it.id !in activeHandles }
+        downloadingToStart.forEach { startDownload(it) }
+        advanceDownloadQueue()
     }
 
     private fun startDownload(item: DownloadItem) {
@@ -347,6 +818,7 @@ object DownloadsRepository {
                         updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                     )
                 }
+                advanceDownloadQueue()
             },
             onFailure = { message ->
                 activeHandles.remove(item.id)
@@ -361,6 +833,7 @@ object DownloadsRepository {
                         )
                     }
                 }
+                advanceDownloadQueue()
             },
             onPaused = {
                 activeHandles.remove(item.id)
@@ -368,6 +841,7 @@ object DownloadsRepository {
                     if (current.status != DownloadStatus.Downloading) return@mutateItem current
                     current.copy(status = DownloadStatus.Paused, errorMessage = null)
                 }
+                advanceDownloadQueue()
             },
         )
 
@@ -417,7 +891,7 @@ object DownloadsRepository {
 
     private fun persist() {
         DownloadsStorage.savePayload(
-            DownloadsCodec.encodeItems(_uiState.value.items),
+            DownloadsCodec.encodeItems(_uiState.value.items, showMetadata),
         )
     }
 
@@ -454,6 +928,7 @@ object DownloadsRepository {
 @Serializable
 private data class StoredDownloadsPayload(
     val items: List<DownloadItem> = emptyList(),
+    val showMetadata: Map<String, StoredDownloadedShowMeta> = emptyMap(),
 )
 
 private object DownloadsCodec {
@@ -462,15 +937,25 @@ private object DownloadsCodec {
         encodeDefaults = true
     }
 
-    fun decodeItems(payload: String): List<DownloadItem> =
+    fun decodePayload(payload: String): StoredDownloadsPayload =
         runCatching {
-            json.decodeFromString<StoredDownloadsPayload>(payload).items
-        }.getOrDefault(emptyList())
+            json.decodeFromString<StoredDownloadsPayload>(payload)
+        }.getOrDefault(StoredDownloadsPayload())
 
-    fun encodeItems(items: Collection<DownloadItem>): String =
-        json.encodeToString(
+    fun decodeItems(payload: String): List<DownloadItem> =
+        decodePayload(payload).items
+
+    fun encodePayload(payload: StoredDownloadsPayload): String =
+        json.encodeToString(payload)
+
+    fun encodeItems(
+        items: Collection<DownloadItem>,
+        showMetadata: Map<String, StoredDownloadedShowMeta> = emptyMap(),
+    ): String =
+        encodePayload(
             StoredDownloadsPayload(
                 items = items.toList(),
+                showMetadata = showMetadata,
             ),
         )
 }
@@ -569,7 +1054,7 @@ private fun String.fileExtensionFromUrl(): String {
     }
 }
 
-private fun String.isSupportedDownloadUrl(): Boolean {
+internal fun String.isSupportedDownloadUrl(): Boolean {
     val normalized = trim().lowercase()
     if (normalized.startsWith("magnet:")) return false
     if (normalized.endsWith(".m3u8") || normalized.contains(".m3u8?")) return false

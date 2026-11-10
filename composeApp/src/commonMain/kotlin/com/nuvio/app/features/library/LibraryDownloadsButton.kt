@@ -33,27 +33,34 @@ import nuvio.composeapp.generated.resources.compose_settings_root_downloads_titl
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-internal fun LibraryDownloadsButton(onClick: () -> Unit) {
+fun LibraryDownloadsButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val downloads by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
     }.collectAsStateWithLifecycle()
     val hasUnseenCompleted by DownloadsRepository.hasUnseenCompleted.collectAsStateWithLifecycle()
 
-    IconButton(onClick = onClick) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier,
+    ) {
         when {
-            downloads.items.any { it.status == DownloadStatus.Downloading } -> FlowingDownloadIcon()
+            downloads.items.any { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued } -> FlowingDownloadIcon()
             hasUnseenCompleted -> DownloadIcon(
                 modifier = Modifier.gradientMask(MaterialTheme.themePalette.accentBrush()),
                 tint = Color.White,
             )
-            else -> DownloadIcon(tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> DownloadIcon(tint = tint)
         }
     }
 }
 
 @Composable
-private fun FlowingDownloadIcon() {
+internal fun FlowingDownloadIcon() {
     val palette = MaterialTheme.themePalette
     val dimAlpha = MaterialTheme.nuvio.opacity.overlayLight
     val colors = palette.accentGradient.takeIf { it.size >= 2 }

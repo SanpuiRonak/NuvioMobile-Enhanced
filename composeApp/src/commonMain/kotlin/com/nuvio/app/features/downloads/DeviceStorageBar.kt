@@ -1,0 +1,172 @@
+package com.nuvio.app.features.downloads
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.nuvio.app.core.ui.nuvio
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun DeviceStorageBar(
+    appDownloadsBytes: Long,
+    modifier: Modifier = Modifier,
+) {
+    val stats = remember { DownloadsStoragePlatform.getDeviceStorageStats() }
+    val totalBytes = stats.totalBytes
+    val freeBytes = stats.freeBytes
+    val usedBytes = (totalBytes - freeBytes).coerceAtLeast(0L)
+    val otherUsedBytes = (usedBytes - appDownloadsBytes).coerceAtLeast(0L)
+
+    val tokens = MaterialTheme.nuvio
+    val downloadsColor = tokens.colors.accent
+    val otherAppsColor = Color(0xFF6366F1) // Indigo
+    val freeSpaceColor = tokens.colors.borderSubtle
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Device Storage",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (totalBytes > 0L) {
+                    Text(
+                        text = "${formatBytes(freeBytes)} free of ${formatBytes(totalBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Color-coded bar
+            if (totalBytes > 0L) {
+                val downloadsFraction = (appDownloadsBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
+                val otherFraction = (otherUsedBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
+                val freeFraction = (1f - downloadsFraction - otherFraction).coerceAtLeast(0.01f)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(freeSpaceColor),
+                ) {
+                    if (downloadsFraction > 0.001f) {
+                        Box(
+                            modifier = Modifier
+                                .weight(downloadsFraction)
+                                .fillMaxHeight()
+                                .background(downloadsColor),
+                        )
+                    }
+                    if (otherFraction > 0.001f) {
+                        Box(
+                            modifier = Modifier
+                                .weight(otherFraction)
+                                .fillMaxHeight()
+                                .background(otherAppsColor),
+                        )
+                    }
+                    if (freeFraction > 0.001f) {
+                        Box(
+                            modifier = Modifier
+                                .weight(freeFraction)
+                                .fillMaxHeight(),
+                        )
+                    }
+                }
+            }
+
+            // Legends
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                StorageLegendItem(
+                    color = downloadsColor,
+                    label = "Nuvio Downloads",
+                    value = formatBytes(appDownloadsBytes),
+                )
+                if (totalBytes > 0L) {
+                    StorageLegendItem(
+                        color = otherAppsColor,
+                        label = "Other Apps & System",
+                        value = formatBytes(otherUsedBytes),
+                    )
+                    StorageLegendItem(
+                        color = freeSpaceColor,
+                        label = "Free Space",
+                        value = formatBytes(freeBytes),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StorageLegendItem(
+    color: Color,
+    label: String,
+    value: String,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Text(
+            text = "$label: $value",
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}

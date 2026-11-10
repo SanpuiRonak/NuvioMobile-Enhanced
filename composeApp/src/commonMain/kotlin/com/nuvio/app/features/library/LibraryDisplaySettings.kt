@@ -27,6 +27,7 @@ enum class LibrarySortOption {
 data class LibraryDisplaySettingsUiState(
     val layoutMode: LibraryLayoutMode = LibraryLayoutMode.HORIZONTAL,
     val sortOption: LibrarySortOption = LibrarySortOption.DEFAULT,
+    val viewMode: String = "Saved",
 )
 
 object LibraryDisplaySettingsRepository {
@@ -60,6 +61,13 @@ object LibraryDisplaySettingsRepository {
         ensureLoaded()
         if (_uiState.value.sortOption == sortOption) return
         _uiState.value = _uiState.value.copy(sortOption = sortOption)
+        persist()
+    }
+
+    fun setViewMode(viewMode: String) {
+        ensureLoaded()
+        if (_uiState.value.viewMode == viewMode) return
+        _uiState.value = _uiState.value.copy(viewMode = viewMode)
         persist()
     }
 
@@ -223,6 +231,7 @@ internal fun encodeLibraryDisplaySettings(state: LibraryDisplaySettingsUiState):
         StoredLibraryDisplaySettings(
             layoutMode = state.layoutMode.name,
             sortOption = state.sortOption.name,
+            viewMode = state.viewMode,
         ),
     )
 
@@ -241,6 +250,7 @@ internal fun decodeLibraryDisplaySettings(payload: String?): LibraryDisplaySetti
         sortOption = stored?.sortOption
             ?.let { value -> LibrarySortOption.entries.firstOrNull { it.name == value } }
             ?: LibrarySortOption.DEFAULT,
+        viewMode = stored?.viewMode ?: "Saved",
     )
 }
 
@@ -278,6 +288,7 @@ internal val LibrarySourceMode.isRemoteTrackingSource: Boolean
 private data class StoredLibraryDisplaySettings(
     @SerialName("layout_mode") val layoutMode: String = LibraryLayoutMode.HORIZONTAL.name,
     @SerialName("sort_option") val sortOption: String = LibrarySortOption.DEFAULT.name,
+    @SerialName("view_mode") val viewMode: String? = null,
 )
 
 private fun libraryProviderOrderComparator(ranks: Map<String, Int>): Comparator<LibraryItem> =

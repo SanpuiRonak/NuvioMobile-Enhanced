@@ -111,7 +111,14 @@ import com.kyant.backdrop.Backdrop
 import com.nuvio.app.core.ui.glass.LocalLiquidGlassBackdrop
 import com.nuvio.app.core.ui.glass.nuvioBackdropSource
 import com.nuvio.app.core.ui.glass.rememberNuvioBackdrop
+import com.nuvio.app.core.ui.DialogButton
+import com.nuvio.app.core.ui.DialogButtonStyle
+import com.nuvio.app.core.ui.DialogButtons
+import com.nuvio.app.core.ui.DialogSurface
+import com.nuvio.app.features.details.components.SeasonBatchConfirmationDialog
+import com.nuvio.app.features.details.components.isEpisodeWatchedForNavigator
 import com.nuvio.app.features.downloads.DownloadsSettingsRepository
+import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
 import com.nuvio.app.features.details.components.DetailActions
 import com.nuvio.app.features.details.components.CommentDetailSheet
 import com.nuvio.app.features.details.components.DetailAdditionalInfoSection
@@ -276,6 +283,7 @@ fun MetaDetailsScreen(
     val cinematicArtworkBackdrop = rememberNuvioBackdrop()
     val cinematicContentBackdrop = rememberNuvioBackdrop()
     var selectedSeasonForActions by remember(type, id) { mutableStateOf<Int?>(null) }
+    var activeSeasonNumber by remember(type, id) { mutableStateOf<Int?>(null) }
     var userRatingSheetRequest by remember(type, id) { mutableStateOf<UserRatingSheetRequest?>(null) }
     val commentsEnabled by remember {
         TraktCommentsSettings.ensureLoaded()
@@ -934,49 +942,28 @@ fun MetaDetailsScreen(
                 val onPlayExternallyClick: (() -> Unit)? = onPlayExternally
                     ?.let { handler -> { runPlayAction(handler, activeResumePositionMs) } }
 
+                val episodeNavigator = rememberEpisodeNavigatorState(meta.id)
                 val showDownloadButton by remember {
                     DownloadsSettingsRepository.ensureLoaded()
                     DownloadsSettingsRepository.showDownloadButton
                 }.collectAsStateWithLifecycle()
-                val downloadHandler = onDownload
-                val onDownloadClick: (() -> Unit)? = if (showDownloadButton && downloadHandler != null) {
+                val onDownloadClick: (() -> Unit)? = if (showDownloadButton) {
                     {
                         stopHeroTrailerForNavigation()
-                        if ((meta.type == "series" || hasEpisodes) && seriesAction != null) {
-                            downloadHandler(
-                                meta.type,
-                                seriesStreamVideoId ?: seriesAction.videoId,
-                                meta.id,
-                                meta.type,
-                                meta.name,
-                                meta.logo,
-                                meta.poster,
-                                meta.background,
-                                seriesAction.seasonNumber,
-                                seriesAction.episodeNumber,
-                                seriesAction.episodeTitle,
-                                seriesAction.episodeThumbnail,
-                                seriesPauseDescription,
-                                null,
-                            )
-                        } else {
-                            downloadHandler(
-                                meta.type,
-                                meta.id,
-                                meta.id,
-                                meta.type,
-                                meta.name,
-                                meta.logo,
-                                meta.poster,
-                                meta.background,
-                                null,
-                                null,
-                                null,
-                                null,
-                                meta.description,
-                                null,
-                            )
-                        }
+                        val targetSeason = activeSeasonNumber
+                            ?: episodeNavigator.selectedSeason
+                            ?: seriesAction?.seasonNumber
+                            ?: initialSeasonNumber
+                            ?: meta.videos.mapNotNull { it.season }.firstOrNull { it > 0 }
+                            ?: 1
+                        SeasonBatchDownloadCoordinator.prepareBatchPlan(
+                            meta = meta,
+                            season = targetSeason,
+                            watchedKeys = watchedUiState.watchedKeys,
+                            isEpisodeWatched = { ep ->
+                                meta.isEpisodeWatchedForNavigator(ep, progressByVideoId, watchedUiState.watchedKeys)
+                            },
+                        )
                     }
                 } else {
                     null
@@ -1047,7 +1034,8 @@ fun MetaDetailsScreen(
                     )
                         ?.takeUnless { it.isCompleted }
                     stopHeroTrailerForNavigation()
-                    onPlay?.invoke(
+                    val playAction = onPlayManually ?: onPlay
+                    playAction?.invoke(
                         meta.type,
                         streamVideoId,
                         meta.id,
@@ -1118,7 +1106,6 @@ fun MetaDetailsScreen(
                     )
                 }
                 val listState = rememberLazyListState()
-                val episodeNavigator = rememberEpisodeNavigatorState(meta.id)
                 val heroStretchState = rememberHeroStretchState(listState)
                 val density = LocalDensity.current
                 val safeAreaTopPx = with(density) {
@@ -1371,6 +1358,11 @@ fun MetaDetailsScreen(
                                         showManualPlayOption = showManualPlayOption,
                                         preferredEpisodeSeasonNumber = initialSeasonNumber ?: seriesAction?.seasonNumber,
                                         preferredEpisodeNumber = initialEpisodeNumber ?: seriesAction?.episodeNumber,
+                                        selectedSeason = activeSeasonNumber ?: episodeNavigator.selectedSeason,
+                                        onSeasonSelected = { season ->
+                                            activeSeasonNumber = season
+                                            episodeNavigator.selectSeason(season)
+                                        },
                                         hasProductionSection = hasProductionSection,
                                         hasTrailersSection = hasTrailersSection,
                                         hasEpisodes = hasEpisodes,
@@ -1697,6 +1689,31 @@ fun MetaDetailsScreen(
                                     }
                                 } else {
                                     null
+                                },
+                            )
+                        }
+
+                        val activeBatchPlan by SeasonBatchDownloadCoordinator.activePlan.collectAsStateWithLifecycle()
+                        activeBatchPlan?.let { plan ->
+                            SeasonBatchConfirmationDialog(
+                                plan = plan,
+                                isEpisodeWatched = { ep ->
+                                    meta.isEpisodeWatchedForNavigator(ep, progressByVideoId, watchedUiState.watchedKeys)
+                                },
+                                onDismissRequest = {
+                                    SeasonBatchDownloadCoordinator.cancelBatchPlan()
+                                },
+                                onConfirm = { confirmedPlan ->
+                                    val started = SeasonBatchDownloadCoordinator.queueConfirmedBatch()
+                                    detailsScope.launch {
+                                        NuvioToastController.show(
+                                            if (started) {
+                                                getString(Res.string.downloads_enqueue_started)
+                                            } else {
+                                                getString(Res.string.downloads_enqueue_requires_wifi)
+                                            },
+                                        )
+                                    }
                                 },
                             )
                         }
@@ -2213,6 +2230,8 @@ private fun LazyListScope.configuredMetaSectionItems(
     listState: LazyListState? = null,
     leadingItemCount: Int = 0,
     stickyBackground: Color = Color.Unspecified,
+    selectedSeason: Int? = null,
+    onSeasonSelected: ((Int) -> Unit)? = null,
 ) {
     val enabledItems = settings.items.filter { it.enabled }
     var emittedItemCount = 0
@@ -2301,6 +2320,8 @@ private fun LazyListScope.configuredMetaSectionItems(
                     onCompanyClick = onCompanyClick,
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
+                    selectedSeason = selectedSeason,
+                    onSeasonSelected = onSeasonSelected,
                 )
             }
         }
@@ -2487,6 +2508,8 @@ private fun ConfiguredMetaSections(
     onCompanyClick: ((MetaCompany, String) -> Unit)?,
     sharedTransitionScope: SharedTransitionScope?,
     animatedVisibilityScope: AnimatedVisibilityScope?,
+    selectedSeason: Int? = null,
+    onSeasonSelected: ((Int) -> Unit)? = null,
 ) {
     val enabledItems = settings.items.filter { it.enabled }
 
@@ -2596,6 +2619,8 @@ private fun ConfiguredMetaSections(
                         onEpisodeClick = onEpisodeClick,
                         onEpisodeLongPress = onEpisodeLongPress,
                         onSeasonLongPress = onSeasonLongPress,
+                        selectedSeason = selectedSeason,
+                        onSeasonSelected = onSeasonSelected,
                     )
                 }
             }

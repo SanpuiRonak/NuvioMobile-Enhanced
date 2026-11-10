@@ -2,8 +2,10 @@ package com.nuvio.app.features.details
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.logging.InAppLogger
+import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.fetchAddonResponseText
@@ -121,6 +123,25 @@ object MetaDetailsRepository {
             return
         }
 
+        val savedOfflineMeta = DownloadsRepository.getSavedMetaDetails(id)
+        val isOffline = NetworkStatusRepository.uiState.value.isOfflineLike
+
+        if (savedOfflineMeta != null) {
+            if (isOffline) {
+                log.d { "Offline: using saved download metadata for type=$type id=$id" }
+                InAppLogger.debug("Metadata/MetaDetailsRepository", "Using offline saved meta type=$type id=$id")
+                _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
+                activeRequestKey = requestKey
+                return
+            } else if (currentState.meta?.type != type || currentState.meta.id != id) {
+                log.d { "Using saved download metadata while refreshing for type=$type id=$id" }
+                _uiState.value = MetaDetailsUiState(
+                    isLoading = true,
+                    meta = savedOfflineMeta.withUnreleasedFilter(),
+                )
+            }
+        }
+
         if (currentState.meta?.type == type && currentState.meta.id == id && !currentState.isLoading) {
             log.d { "Skipping reload for cached meta — type=$type id=$id" }
             InAppLogger.debug("Metadata/MetaDetailsRepository", "Skipping reload for current meta type=$type id=$id")
@@ -135,7 +156,9 @@ object MetaDetailsRepository {
         }
 
         activeRequestKey = requestKey
-        _uiState.value = MetaDetailsUiState(isLoading = true)
+        if (savedOfflineMeta == null) {
+            _uiState.value = MetaDetailsUiState(isLoading = true)
+        }
 
         scope.launch {
             val metaLookupId = resolveMetaLookupId(itemId = id, itemType = type)
@@ -153,6 +176,13 @@ object MetaDetailsRepository {
                         mdbListSettings = mdbListSettings,
                         metaScreenSettingsFingerprint = metaScreenSettingsFingerprint,
                     )
+                    return@launch
+                }
+
+                if (savedOfflineMeta != null) {
+                    log.i { "No addons or TMDB meta, using saved offline meta type=$type id=$id" }
+                    _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
+                    activeRequestKey = requestKey
                     return@launch
                 }
 
@@ -193,6 +223,13 @@ object MetaDetailsRepository {
                 return@launch
             }
 
+            if (savedOfflineMeta != null) {
+                log.i { "Failed to load meta from all providers, falling back to saved offline meta type=$type id=$id" }
+                _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
+                activeRequestKey = requestKey
+                return@launch
+            }
+
             InAppLogger.error("Metadata/MetaDetailsRepository", "Failed to load meta from all providers type=$type id=$id lookup=$metaLookupId")
             _uiState.value = MetaDetailsUiState(
                 errorMessage = getString(Res.string.details_load_failed_all_addons),
@@ -206,14 +243,18 @@ object MetaDetailsRepository {
         val currentMeta = _uiState.value.meta?.takeIf { it.type == type && it.id == id }
         if (currentMeta != null) return currentMeta
 
-        val cachedEntry = cachedMetaByRequestKey[requestKey] ?: return null
-        val cachedMeta = cachedEntry.metaScreenMeta
-            ?.takeIf {
-                cachedEntry.metaScreenSettingsFingerprint ==
-                    buildMetaScreenSettingsFingerprint(MdbListSettingsRepository.snapshot())
-            }
-            ?: cachedEntry.baseMeta
-        return cachedMeta.withUnreleasedFilter()
+        val cachedEntry = cachedMetaByRequestKey[requestKey]
+        if (cachedEntry != null) {
+            val cachedMeta = cachedEntry.metaScreenMeta
+                ?.takeIf {
+                    cachedEntry.metaScreenSettingsFingerprint ==
+                        buildMetaScreenSettingsFingerprint(MdbListSettingsRepository.snapshot())
+                }
+                ?: cachedEntry.baseMeta
+            return cachedMeta.withUnreleasedFilter()
+        }
+
+        return DownloadsRepository.getSavedMetaDetails(id)?.withUnreleasedFilter()
     }
 
     fun clearCachedMetadata() {
@@ -579,6 +620,10 @@ object MetaDetailsRepository {
         val cachedEntry = CachedMetaEntry(baseMeta = meta)
         cachedMetaByRequestKey[requestKey] = cachedEntry
 
+        if (DownloadsRepository.hasDownloadsFor(meta.id) || DownloadsRepository.getShowMetadata(meta.id) != null) {
+            DownloadsRepository.updateShowMetadataFromMetaDetails(meta)
+        }
+
         if (!shouldEnrichForMetaScreen(meta, fallbackItemId, mdbListSettings)) {
             _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())
             activeRequestKey = requestKey
@@ -598,6 +643,9 @@ object MetaDetailsRepository {
                 settings = mdbListSettings,
                 settingsFingerprint = metaScreenSettingsFingerprint,
             )
+        }
+        if (DownloadsRepository.hasDownloadsFor(enrichedMeta.id) || DownloadsRepository.getShowMetadata(enrichedMeta.id) != null) {
+            DownloadsRepository.updateShowMetadataFromMetaDetails(enrichedMeta)
         }
         cachedMetaByRequestKey[requestKey] = cachedEntry.copy(
             metaScreenMeta = enrichedMeta,

@@ -240,6 +240,12 @@ class MetalLayer: CAMetalLayer {
             return drawable
         }
 
+#if targetEnvironment(simulator)
+        captureLock.lock()
+        capturedDrawableCount &+= 1
+        captureLock.unlock()
+        handler(drawable)
+#else
         drawable.addPresentedHandler { [weak self] _ in
             guard let self else { return }
             self.captureLock.lock()
@@ -247,6 +253,7 @@ class MetalLayer: CAMetalLayer {
             self.captureLock.unlock()
             handler(drawable)
         }
+#endif
 
         return drawable
     }

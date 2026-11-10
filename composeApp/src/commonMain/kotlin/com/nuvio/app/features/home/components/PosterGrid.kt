@@ -106,7 +106,7 @@ internal fun PosterGridSkeletonRow(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PosterGridTile(
+internal fun PosterGridTile(
     item: MetaPreview,
     cornerRadiusDp: Int,
     hideLabels: Boolean,

@@ -104,8 +104,25 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.glass.ambientLiquidGlass
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
+import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.DownloadStatus
+import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.formatDownloadBadgeProgress
 
 private val log = Logger.withTag("SeriesContent")
 
@@ -128,6 +145,8 @@ fun DetailSeriesContent(
     onEpisodeClick: ((MetaVideo) -> Unit)? = null,
     onEpisodeLongPress: ((MetaVideo) -> Unit)? = null,
     onSeasonLongPress: ((Int) -> Unit)? = null,
+    selectedSeason: Int? = null,
+    onSeasonSelected: ((Int) -> Unit)? = null,
 ) {
     val hasVideos = meta.videos.isNotEmpty()
     if (meta.type != "series" && !hasVideos) return
@@ -184,9 +203,25 @@ fun DetailSeriesContent(
         ?.takeIf { it in groupedEpisodes }
         ?: seasons.first()
     var selectedSeasonOverride by rememberSaveable(meta.id) { mutableStateOf<Int?>(null) }
-    val currentSeason = selectedSeasonOverride
+    val currentSeason = (selectedSeason ?: selectedSeasonOverride)
         ?.takeIf { it in groupedEpisodes }
         ?: defaultSeason
+
+    val downloadsUiState by remember {
+        DownloadsRepository.ensureLoaded()
+        DownloadsRepository.uiState
+    }.collectAsStateWithLifecycle()
+
+    val getEpisodeDownloadItem: (MetaVideo) -> DownloadItem? = remember(downloadsUiState.items, meta.id) {
+        { video ->
+            DownloadsRepository.findEpisodeDownload(
+                parentMetaId = meta.id,
+                seasonNumber = video.season,
+                episodeNumber = video.episode,
+                videoId = video.id,
+            )
+        }
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val sizing = seriesContentSizing(maxWidth.value)
@@ -202,7 +237,10 @@ fun DetailSeriesContent(
                 currentSeason = currentSeason,
                 sizing = sizing,
                 horizontalScrollPadding = horizontalScrollPadding,
-                onSelect = { selectedSeasonOverride = it },
+                onSelect = {
+                    selectedSeasonOverride = it
+                    onSeasonSelected?.invoke(it)
+                },
                 onLongPress = onSeasonLongPress,
             )
 
@@ -309,6 +347,7 @@ fun DetailSeriesContent(
                                 preferredSeasonNumber = preferredSeasonNumber,
                                 preferredEpisodeNumber = preferredEpisodeNumber,
                             ),
+                            getEpisodeDownloadItem = getEpisodeDownloadItem,
                             onEpisodeClick = onEpisodeClick,
                             onEpisodeLongPress = onEpisodeLongPress,
                         )
@@ -346,6 +385,7 @@ fun DetailSeriesContent(
                                             metaId = meta.id,
                                             episode = episode,
                                         ),
+                                    downloadItem = getEpisodeDownloadItem(episode),
                                     episodeRatingsVisibility = episodeRatingsVisibility,
                                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                                     sizing = sizing,
@@ -437,6 +477,18 @@ internal fun DetailSeriesListEpisode(
             fallbackVideoId = episode.id,
         )
         val userRatingTarget = remember(meta, episode) { meta.episodeUserRatingTarget(episode) }
+        val downloadsUiState by remember {
+            DownloadsRepository.ensureLoaded()
+            DownloadsRepository.uiState
+        }.collectAsStateWithLifecycle()
+        val downloadItem = remember(downloadsUiState.items, meta.id, episode) {
+            DownloadsRepository.findEpisodeDownload(
+                parentMetaId = meta.id,
+                seasonNumber = episode.season,
+                episodeNumber = episode.episode,
+                videoId = episode.id,
+            )
+        }
         EpisodeListCard(
             video = episode,
             userRating = rememberUserRating(userRatingTarget),
@@ -451,6 +503,7 @@ internal fun DetailSeriesListEpisode(
                     metaId = meta.id,
                     episode = episode,
                 ),
+            downloadItem = downloadItem,
             episodeRatingsVisibility = episodeRatingsVisibility,
             blurUnwatchedEpisodes = blurUnwatchedEpisodes,
             sizing = sizing,
@@ -855,6 +908,8 @@ private fun EpisodeHorizontalRow(
     preferredEpisodeNumber: Int? = null,
     listState: LazyListState = rememberLazyListState(),
     highlightedKey: String? = null,
+    isEpisodeDownloaded: ((MetaVideo) -> Boolean)? = null,
+    getEpisodeDownloadItem: ((MetaVideo) -> DownloadItem?)? = null,
     onEpisodeClick: ((MetaVideo) -> Unit)?,
     onEpisodeLongPress: ((MetaVideo) -> Unit)?,
 ) {
@@ -917,6 +972,8 @@ private fun EpisodeHorizontalRow(
                         metaId = parentMetaId,
                         episode = episode,
                     ),
+                downloadItem = getEpisodeDownloadItem?.invoke(episode),
+                isDownloaded = isEpisodeDownloaded?.invoke(episode) == true,
                 episodeRatingsVisibility = episodeRatingsVisibility,
                 blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                 metrics = rowMetrics,
@@ -938,6 +995,8 @@ private fun EpisodeHorizontalCard(
     tmdbRating: Double?,
     imdbRating: Double?,
     isWatched: Boolean,
+    downloadItem: DownloadItem? = null,
+    isDownloaded: Boolean = false,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     metrics: EpisodeHorizontalCardMetrics,
@@ -1041,14 +1100,24 @@ private fun EpisodeHorizontalCard(
                 ),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            EpisodeCodeBadge(
-                text = video.episodeBadge(),
-                textSize = metrics.badgeTextSize,
-                radius = metrics.badgeRadius,
-                horizontalPadding = metrics.badgeHorizontalPadding,
-                verticalPadding = metrics.badgeVerticalPadding,
-                backgroundAlpha = 0.42f,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                EpisodeCodeBadge(
+                    text = video.episodeBadge(),
+                    textSize = metrics.badgeTextSize,
+                    radius = metrics.badgeRadius,
+                    horizontalPadding = metrics.badgeHorizontalPadding,
+                    verticalPadding = metrics.badgeVerticalPadding,
+                    backgroundAlpha = 0.42f,
+                )
+                if (downloadItem != null) {
+                    EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
+                } else if (isDownloaded) {
+                    EpisodeDownloadedBadge(compact = true)
+                }
+            }
 
             Text(
                 text = localizedEpisodeTitle(video.title, video.episode) ?: video.title,
@@ -1283,6 +1352,156 @@ private fun EpisodeCodeBadge(
 }
 
 @Composable
+internal fun EpisodeDownloadBadge(
+    downloadItem: DownloadItem?,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    if (downloadItem == null) return
+
+    val isCompleted = downloadItem.status == DownloadStatus.Completed
+    val isDownloading = downloadItem.status == DownloadStatus.Downloading
+    val isQueued = downloadItem.status == DownloadStatus.Queued
+    val isPaused = downloadItem.status == DownloadStatus.Paused
+
+    if (!isCompleted && !isDownloading && !isQueued && !isPaused) return
+
+    val animatedProgress by animateFloatAsState(
+        targetValue = downloadItem.progressFraction.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 350),
+        label = "episodeDownloadBadgeProgress",
+    )
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isCompleted) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(11.dp),
+            )
+            Text(
+                text = stringResource(Res.string.provider_downloaded).uppercase(),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (compact) 9.sp else 10.sp,
+                    letterSpacing = 0.2.sp,
+                ),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else if (isDownloading) {
+            if (downloadItem.totalBytes != null && downloadItem.totalBytes > 0L) {
+                CircularProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.size(10.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f),
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(10.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+            Text(
+                text = formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (compact) 9.sp else 10.sp,
+                    letterSpacing = 0.2.sp,
+                ),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else if (isQueued) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(10.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+            )
+            Text(
+                text = if (downloadItem.totalBytes != null && downloadItem.totalBytes > 0L) {
+                    formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes)
+                } else {
+                    stringResource(Res.string.downloads_status_queued).uppercase()
+                },
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (compact) 9.sp else 10.sp,
+                    letterSpacing = 0.2.sp,
+                ),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else if (isPaused) {
+            Icon(
+                imageVector = Icons.Rounded.Pause,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(10.dp),
+            )
+            Text(
+                text = "PAUSED",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (compact) 9.sp else 10.sp,
+                    letterSpacing = 0.2.sp,
+                ),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun EpisodeDownloadedBadge(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(11.dp),
+        )
+        Text(
+            text = stringResource(Res.string.provider_downloaded).uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = if (compact) 9.sp else 10.sp,
+                letterSpacing = 0.2.sp,
+            ),
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
 private fun EpisodeRatingBadges(
     imdbRating: String?,
     tmdbRating: String?,
@@ -1402,6 +1621,8 @@ private fun EpisodeListCard(
     tmdbRating: Double?,
     imdbRating: Double?,
     isWatched: Boolean,
+    downloadItem: DownloadItem? = null,
+    isDownloaded: Boolean = false,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     sizing: SeriesContentSizing,
@@ -1480,17 +1701,27 @@ private fun EpisodeListCard(
                     )
                 }
 
-                EpisodeCodeBadge(
-                    text = video.episodeBadge(),
-                    textSize = sizing.badgeTextSize,
-                    radius = sizing.badgeRadius,
-                    horizontalPadding = sizing.badgeHorizontalPadding,
-                    verticalPadding = sizing.badgeVerticalPadding,
-                    backgroundAlpha = 0.85f,
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(start = 8.dp, top = 8.dp),
-                )
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    EpisodeCodeBadge(
+                        text = video.episodeBadge(),
+                        textSize = sizing.badgeTextSize,
+                        radius = sizing.badgeRadius,
+                        horizontalPadding = sizing.badgeHorizontalPadding,
+                        verticalPadding = sizing.badgeVerticalPadding,
+                        backgroundAlpha = 0.85f,
+                    )
+                    if (downloadItem != null) {
+                        EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
+                    } else if (isDownloaded) {
+                        EpisodeDownloadedBadge(compact = true)
+                    }
+                }
 
                 NuvioAnimatedWatchedBadge(
                     isVisible = isWatched,

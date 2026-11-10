@@ -167,6 +167,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import com.nuvio.app.features.settings.AccountSettingsScreen
 import com.nuvio.app.features.settings.AddonsSettingsScreen
 import com.nuvio.app.features.settings.ContinueWatchingSettingsScreen
+import com.nuvio.app.features.settings.DownloadsSettingsScreen
 import com.nuvio.app.features.settings.HomescreenSettingsScreen
 import com.nuvio.app.features.settings.LicensesAttributionsSettingsScreen
 import com.nuvio.app.features.settings.MetaScreenSettingsScreen
@@ -1135,7 +1136,7 @@ internal fun MainAppContent(
 
             val isPartyMedia = PartyRepository.state.value.party?.media?.key ==
                 partyMediaKey(parentMetaType, parentMetaId, seasonNumber, episodeNumber)
-            if (!isPartyMedia && !PlaybackAvailability.current().canStream(type, videoId)) {
+            if (!isPartyMedia && !PlaybackAvailability.current().canPlay(type, videoId, parentMetaId, seasonNumber, episodeNumber)) {
                 NuvioToastController.show(playbackUnavailableMessage)
                 return
             }
@@ -1723,6 +1724,11 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onOpenDownloadsSettings = { navController.navigate(DownloadsSettingsRoute(downloadsTitle)) },
+                                onOpenDownload = ::openDownloadedItem,
+                                onNavigateToShowDownloads = { showId, title ->
+                                    navController.navigate(DetailRoute(type = "series", id = showId, title = title))
+                                },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onLiveTvChannelClick = onLiveTvChannelClick,
@@ -1952,6 +1958,11 @@ internal fun MainAppContent(
                         useNativeNavigation = useNativeNavigation,
                         onOpenDownload = ::openDownloadedItem,
                     )
+                }
+                entry<DownloadsSettingsRoute> { route ->
+                    SettingsDestination(route, navController) { onBack ->
+                        DownloadsSettingsScreen(onBack = onBack)
+                    }
                 }
                 entry<DownloadShowRoute> { route ->
                     DownloadShowDestination(

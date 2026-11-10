@@ -1,0 +1,680 @@
+package com.nuvio.app.features.details.components
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.i18n.localizedByteUnit
+import com.nuvio.app.core.ui.DialogButton
+import com.nuvio.app.core.ui.DialogButtonStyle
+import com.nuvio.app.core.ui.DialogButtons
+import com.nuvio.app.core.ui.DialogSurface
+import com.nuvio.app.features.debrid.DebridStreamMetadata
+import com.nuvio.app.features.debrid.DebridStreamPreferences
+import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.downloads.BatchModalStep
+import com.nuvio.app.features.downloads.DownloadStatus
+import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.EpisodePlanStatus
+import com.nuvio.app.features.downloads.PlannedEpisodeItem
+import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
+import com.nuvio.app.features.downloads.SeasonBatchPlan
+import com.nuvio.app.features.downloads.batchEpisodeKey
+import com.nuvio.app.features.downloads.isBatchEpisodeDownloaded
+import com.nuvio.app.features.streams.StreamItem
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
+
+@Composable
+fun SeasonBatchConfirmationDialog(
+    plan: SeasonBatchPlan,
+    isEpisodeWatched: (MetaVideo) -> Boolean = { false },
+    onDismissRequest: () -> Unit,
+    onConfirm: (SeasonBatchPlan) -> Unit,
+) {
+    var overrideTargetItem by remember { mutableStateOf<PlannedEpisodeItem?>(null) }
+
+    when (val step = plan.step) {
+        is BatchModalStep.EpisodeSelection -> {
+            EpisodeSelectionDialog(
+                plan = plan,
+                isEpisodeWatched = isEpisodeWatched,
+                onDismissRequest = onDismissRequest,
+            )
+        }
+        is BatchModalStep.SourceSelection -> {
+            SourceSelectionDialog(
+                plan = plan,
+                seasonIndex = step.seasonIndex,
+                onDismissRequest = onDismissRequest,
+                onConfirm = { onConfirm(plan) },
+                onOverrideClicked = { overrideTargetItem = it },
+            )
+        }
+    }
+
+    val overrideItem = overrideTargetItem
+    if (overrideItem != null) {
+        val currentSeason = when (val step = plan.step) {
+            is BatchModalStep.SourceSelection -> plan.activeSeasons.getOrNull(step.seasonIndex) ?: plan.season
+            else -> plan.season
+        }
+        StreamOverrideDialog(
+            target = overrideItem,
+            onSelect = { stream ->
+                SeasonBatchDownloadCoordinator.overrideEpisodeStream(
+                    season = currentSeason,
+                    episodeNumber = overrideItem.episode.episode,
+                    stream = stream,
+                )
+                overrideTargetItem = null
+            },
+            onDismiss = { overrideTargetItem = null },
+        )
+    }
+}
+
+@Composable
+private fun EpisodeSelectionDialog(
+    plan: SeasonBatchPlan,
+    isEpisodeWatched: (MetaVideo) -> Boolean,
+    onDismissRequest: () -> Unit,
+) {
+    DialogSurface(
+        onDismissRequest = onDismissRequest,
+        title = plan.meta.name,
+    ) {
+        val downloadsUiState by DownloadsRepository.uiState.collectAsState()
+        val currentDownloads = downloadsUiState.items
+
+        fun isDownloaded(ep: MetaVideo, season: Int): Boolean =
+            isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, ep, season)
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 1. Season chips row (allow choosing from several seasons)
+            if (plan.allSeasons.size > 1) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(plan.allSeasons) { seasonNumber ->
+                        val seasonLabel = if (seasonNumber == 0) {
+                            stringResource(Res.string.episodes_specials)
+                        } else {
+                            stringResource(Res.string.episodes_season, seasonNumber)
+                        }
+                        val countInSeason = plan.episodesBySeason[seasonNumber].orEmpty().count { ep ->
+                            batchEpisodeKey(seasonNumber, ep.episode ?: 0) in plan.selectedEpisodeKeys
+                        }
+                        val chipText = if (countInSeason > 0) "$seasonLabel ($countInSeason)" else seasonLabel
+                        val isSelectedSeason = plan.currentPickerSeason == seasonNumber
+
+                        FilterChip(
+                            selected = isSelectedSeason,
+                            onClick = { SeasonBatchDownloadCoordinator.setPickerSeason(seasonNumber) },
+                            label = { Text(chipText, style = MaterialTheme.typography.labelMedium) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            // 2. Current season select/deselect row
+            val currentSeasonEpisodes = plan.episodesBySeason[plan.currentPickerSeason].orEmpty()
+            val currentSeasonLabel = if (plan.currentPickerSeason == 0) {
+                stringResource(Res.string.episodes_specials)
+            } else {
+                stringResource(Res.string.episodes_season, plan.currentPickerSeason)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = currentSeasonLabel,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = {
+                            SeasonBatchDownloadCoordinator.selectUnwatchedForSeason(
+                                season = plan.currentPickerSeason,
+                                isEpisodeWatched = isEpisodeWatched,
+                            )
+                        },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = stringResource(Res.string.downloads_select_unwatched),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    TextButton(
+                        onClick = { SeasonBatchDownloadCoordinator.selectAllForSeason(plan.currentPickerSeason) },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = stringResource(Res.string.downloads_select_all),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    TextButton(
+                        onClick = { SeasonBatchDownloadCoordinator.deselectAllForSeason(plan.currentPickerSeason) },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = stringResource(Res.string.downloads_deselect_all),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+
+            // 4. Episodes list for current season
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 260.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(
+                    items = currentSeasonEpisodes,
+                    key = { it.id.ifBlank { "${it.season}_${it.episode}" } },
+                ) { ep ->
+                    val epNum = ep.episode ?: 0
+                    val key = batchEpisodeKey(plan.currentPickerSeason, epNum)
+                    val isChecked = key in plan.selectedEpisodeKeys
+                    val downloaded = isDownloaded(ep, plan.currentPickerSeason)
+                    val watched = isEpisodeWatched(ep) || "${plan.meta.id}:${plan.currentPickerSeason}:$epNum" in plan.watchedEpisodeKeys || ep.id in plan.watchedEpisodeKeys
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !downloaded) {
+                                SeasonBatchDownloadCoordinator.toggleEpisodeSelection(plan.currentPickerSeason, epNum)
+                            },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isChecked) 0.5f else 0.25f),
+                        border = if (isChecked) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = if (downloaded) true else isChecked,
+                                enabled = !downloaded,
+                                onCheckedChange = {
+                                    SeasonBatchDownloadCoordinator.toggleEpisodeSelection(plan.currentPickerSeason, epNum)
+                                },
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                val epTitle = ep.title?.takeIf { it.isNotBlank() } ?: "Episode $epNum"
+                                Text(
+                                    text = "E$epNum • $epTitle",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val tags = mutableListOf<String>()
+                                if (downloaded) tags.add(stringResource(Res.string.season_download_already_downloaded))
+                                if (watched) tags.add("Watched")
+                                if (tags.isNotEmpty()) {
+                                    Text(
+                                        text = tags.joinToString(" • "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (downloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Summary text
+            val selectedCount = plan.totalSelectedCount
+            val seasonsCount = plan.allSeasons.count { s ->
+                plan.episodesBySeason[s].orEmpty().any { batchEpisodeKey(s, it.episode ?: 0) in plan.selectedEpisodeKeys }
+            }
+            val summaryText = if (seasonsCount > 1) {
+                stringResource(Res.string.downloads_episodes_selected_multi_season, selectedCount, seasonsCount)
+            } else {
+                stringResource(Res.string.downloads_episodes_selected, selectedCount)
+            }
+
+            Text(
+                text = summaryText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_cancel),
+                onClick = onDismissRequest,
+                style = DialogButtonStyle.Secondary,
+            )
+            DialogButton(
+                text = stringResource(Res.string.downloads_action_continue_source_selection),
+                onClick = { SeasonBatchDownloadCoordinator.continueToSourceSelection() },
+                style = DialogButtonStyle.Primary,
+                enabled = plan.totalSelectedCount > 0,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SourceSelectionDialog(
+    plan: SeasonBatchPlan,
+    seasonIndex: Int,
+    onDismissRequest: () -> Unit,
+    onConfirm: () -> Unit,
+    onOverrideClicked: (PlannedEpisodeItem) -> Unit,
+) {
+    val totalSeasons = plan.activeSeasons.size
+    val currentSeason = plan.activeSeasons.getOrNull(seasonIndex) ?: plan.season
+    val currentSeasonPlan = plan.seasonPlans[currentSeason]
+    val isPlanning = currentSeasonPlan?.isPlanning == true
+
+    val dialogTitle = if (plan.isSingleMedia) {
+        plan.meta.name
+    } else {
+        stringResource(
+            Res.string.downloads_season_step_indicator,
+            seasonIndex + 1,
+            totalSeasons,
+        )
+    }
+
+    val currentSeasonLabel = if (plan.isSingleMedia) {
+        plan.meta.releaseInfo.orEmpty()
+    } else if (currentSeason == 0) {
+        stringResource(Res.string.episodes_specials)
+    } else {
+        stringResource(Res.string.episodes_season, currentSeason)
+    }
+
+    DialogSurface(
+        onDismissRequest = onDismissRequest,
+        title = dialogTitle,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                if (currentSeasonLabel.isNotBlank()) {
+                    Text(
+                        text = currentSeasonLabel,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (isPlanning) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = stringResource(Res.string.season_download_finding_source),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+
+            val episodes = currentSeasonPlan?.episodes.orEmpty()
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(
+                    items = episodes,
+                    key = { it.episode.id.ifBlank { "${it.episode.season}_${it.episode.episode}" } },
+                ) { item ->
+                    EpisodeSourcePlanRow(
+                        item = item,
+                        defaultTitle = plan.meta.name,
+                        onChangeSource = { onOverrideClicked(item) },
+                    )
+                }
+            }
+        }
+
+        val isLastSeason = seasonIndex >= totalSeasons - 1
+
+        DialogButtons {
+            DialogButton(
+                text = if (plan.isSingleMedia) {
+                    stringResource(Res.string.action_cancel)
+                } else {
+                    stringResource(Res.string.action_back)
+                },
+                onClick = {
+                    if (plan.isSingleMedia) {
+                        onDismissRequest()
+                    } else if (seasonIndex > 0) {
+                        SeasonBatchDownloadCoordinator.goToSeasonIndex(seasonIndex - 1)
+                    } else {
+                        SeasonBatchDownloadCoordinator.goToEpisodeSelection()
+                    }
+                },
+                style = DialogButtonStyle.Secondary,
+            )
+
+            if (!isLastSeason && !plan.isSingleMedia) {
+                DialogButton(
+                    text = stringResource(Res.string.downloads_next_season),
+                    onClick = { SeasonBatchDownloadCoordinator.goToSeasonIndex(seasonIndex + 1) },
+                    style = DialogButtonStyle.Primary,
+                    enabled = !isPlanning,
+                    loading = isPlanning,
+                )
+            } else {
+                DialogButton(
+                    text = stringResource(Res.string.downloads_action_queue),
+                    onClick = onConfirm,
+                    style = DialogButtonStyle.Primary,
+                    enabled = !isPlanning && plan.seasonPlans.values.any { it.readyToDownloadCount > 0 },
+                    loading = isPlanning,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeSourcePlanRow(
+    item: PlannedEpisodeItem,
+    defaultTitle: String,
+    onChangeSource: () -> Unit,
+) {
+    val epTitle = item.episode.title?.takeIf { it.isNotBlank() } ?: defaultTitle
+    val displayText = if (item.episode.episode != null) {
+        "E${item.episode.episode} • $epTitle"
+    } else {
+        epTitle
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = displayText,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                when {
+                    item.status == EpisodePlanStatus.Loading -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(10.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(Res.string.season_download_finding_source),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    item.isAlreadyDownloaded || item.status == EpisodePlanStatus.AlreadyDownloaded -> {
+                        Text(
+                            text = stringResource(Res.string.season_download_already_downloaded),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    item.status == EpisodePlanStatus.Ready && item.streamCandidate != null -> {
+                        val badge = item.resolutionLabel
+                        val addon = item.streamCandidate.addonName.takeUnless { it.isNullOrBlank() }
+                        val size = item.sizeBytes?.takeIf { it > 0 }?.let { formatBytes(it) }
+                        val details = listOfNotNull(badge, addon, size).joinToString(" • ")
+                        Text(
+                            text = details.ifBlank { item.streamCandidate.name ?: "Stream selected" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    else -> {
+                        Text(
+                            text = stringResource(Res.string.season_download_no_source_found),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+
+            if (item.status == EpisodePlanStatus.Ready || item.allAvailableStreams.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = onChangeSource,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(start = 8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = stringResource(Res.string.downloads_override_source),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StreamOverrideDialog(
+    target: PlannedEpisodeItem,
+    onSelect: (StreamItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val epNum = target.episode.episode
+    val dialogTitle = if (epNum != null) {
+        stringResource(Res.string.downloads_select_source_dialog_title, epNum)
+    } else {
+        stringResource(Res.string.downloads_select_source_dialog_title_single)
+    }
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = dialogTitle,
+    ) {
+        val streams = target.allAvailableStreams
+        if (streams.isEmpty()) {
+            Text(
+                text = stringResource(Res.string.season_download_no_source_found),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(streams) { stream ->
+                    val facts = remember(stream) {
+                        DebridStreamMetadata.facts(stream, DebridStreamPreferences())
+                    }
+                    val isCurrentSelection = stream.name == target.streamCandidate?.name &&
+                        stream.addonName == target.streamCandidate?.addonName
+
+                    val res = facts.resolution.label.takeUnless { it == "Unknown" }
+                    val quality = facts.quality.name.replace("_", "-").takeUnless { it == "UNKNOWN" }
+                    val badge = listOfNotNull(res, quality).firstOrNull() ?: facts.resolution.label
+                    val size = facts.size?.takeIf { it > 0 }?.let { formatBytes(it) }
+                    val addon = stream.addonName
+
+                    val titleText = stream.streamLabel.ifBlank { stream.name ?: "Stream" }
+                    val subtitleText = listOfNotNull(badge, addon, size).joinToString(" • ")
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(stream) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isCurrentSelection) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        },
+                        border = if (isCurrentSelection) {
+                            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                        } else null,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = titleText,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (subtitleText.isNotBlank()) {
+                                    Text(
+                                        text = subtitleText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isCurrentSelection) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (isCurrentSelection) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_cancel),
+                onClick = onDismiss,
+                style = DialogButtonStyle.Secondary,
+            )
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) return ""
+    val kib = 1024.0
+    val mib = kib * 1024.0
+    val gib = mib * 1024.0
+    val value = bytes.toDouble()
+    return when {
+        value >= gib -> "${((value / gib) * 10.0).toInt() / 10.0} ${localizedByteUnit("GB")}"
+        value >= mib -> "${((value / mib) * 10.0).toInt() / 10.0} ${localizedByteUnit("MB")}"
+        value >= kib -> "${((value / kib) * 10.0).toInt() / 10.0} ${localizedByteUnit("KB")}"
+        else -> "$bytes ${localizedByteUnit("B")}"
+    }
+}

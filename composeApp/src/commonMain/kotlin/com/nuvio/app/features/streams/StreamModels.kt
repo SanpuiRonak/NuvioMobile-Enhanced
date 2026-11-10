@@ -4,6 +4,8 @@ import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.servers.ServerPlaybackTarget
 import kotlinx.serialization.Serializable
 
+const val DOWNLOADED_ADDON_ID = "downloaded"
+
 @Serializable
 data class StreamSubtitle(
     val url: String,
