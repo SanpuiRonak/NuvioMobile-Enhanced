@@ -307,6 +307,12 @@ data class AddonStreamGroup(
     val error: String? = null,
 )
 
+val StreamItem.isLocalDownload: Boolean
+    get() = addonId == DOWNLOADED_ADDON_ID
+
+val AddonStreamGroup.isLocalDownload: Boolean
+    get() = addonId == DOWNLOADED_ADDON_ID
+
 enum class StreamsEmptyStateReason {
     NoAddonsInstalled,
     NoCompatibleAddons,

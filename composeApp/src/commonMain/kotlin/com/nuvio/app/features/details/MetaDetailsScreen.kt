@@ -135,7 +135,6 @@ import com.nuvio.app.features.details.components.detailEpisodeListItems
 import com.nuvio.app.features.details.components.rememberEpisodeNavigatorState
 import com.nuvio.app.features.details.components.rememberEpisodeDownloadLookup
 import com.nuvio.app.features.downloads.DownloadItem
-import com.nuvio.app.features.downloads.seasonLabel
 import com.nuvio.app.features.details.components.DetailTrailersSection
 import com.nuvio.app.features.details.components.EpisodeWatchedActionSheet
 import com.nuvio.app.features.details.components.SeasonWatchedActionSheet
@@ -1551,7 +1550,7 @@ fun MetaDetailsScreen(
                             val episodeUserRating = rememberUserRating(episodeRatingTarget)
                             EpisodeWatchedActionSheet(
                                 episode = selectedEpisode,
-                                seasonLabel = selectedEpisode.season?.let { seasonLabel(it) } ?: seasonLabel(0),
+                                seasonLabel = seasonLabel(selectedEpisode.season ?: 0),
                                 isEpisodeWatched = isSelectedEpisodeWatched,
                                 canMarkPreviousEpisodes = previousEpisodes.isNotEmpty(),
                                 arePreviousEpisodesWatched = arePreviousEpisodesWatched,
@@ -1897,7 +1896,7 @@ fun MetaDetailsScreen(
                     progressByVideoId = progressByVideoId,
                 )
             }
-            val seasonLabel = selectedEpisode.season?.let { seasonLabel(it) } ?: seasonLabel(0)
+            val seasonLabel = seasonLabel(selectedEpisode.season ?: 0)
             val zoomEpisodeRatingTarget = remember(meta, selectedEpisode) {
                 meta.episodeUserRatingTarget(selectedEpisode)
             }

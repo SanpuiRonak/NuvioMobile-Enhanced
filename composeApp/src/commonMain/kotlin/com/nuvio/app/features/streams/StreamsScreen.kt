@@ -138,7 +138,6 @@ fun StreamsScreen(
     manualSelection: Boolean = false,
     startFromBeginning: Boolean = false,
     showLoadingScreen: Boolean = false,
-    downloadMode: Boolean = false,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit = { _, _, _ -> },
     onStreamActionOpen: (
         stream: StreamItem,
@@ -337,13 +336,7 @@ fun StreamsScreen(
                 appendInstantServiceToDefaultName = debridSettings.canResolvePlayableLinks && !debridSettings.hasCustomStreamFormatting,
                 resumePositionMs = effectiveResumePositionMs,
                 resumeProgressFraction = effectiveResumeProgressFraction,
-                onStreamSelected = { stream, positionMs, progressFraction ->
-                    if (downloadMode) {
-                        startStreamDownload(stream)
-                    } else {
-                        onStreamSelected(stream, positionMs, progressFraction)
-                    }
-                },
+                onStreamSelected = onStreamSelected,
                 onStreamLongPress = { stream -> streamActionsTarget = stream },
                 onRefresh = reloadStreams,
             )
@@ -366,13 +359,7 @@ fun StreamsScreen(
                 appendInstantServiceToDefaultName = debridSettings.canResolvePlayableLinks && !debridSettings.hasCustomStreamFormatting,
                 resumePositionMs = effectiveResumePositionMs,
                 resumeProgressFraction = effectiveResumeProgressFraction,
-                onStreamSelected = { stream, positionMs, progressFraction ->
-                    if (downloadMode) {
-                        startStreamDownload(stream)
-                    } else {
-                        onStreamSelected(stream, positionMs, progressFraction)
-                    }
-                },
+                onStreamSelected = onStreamSelected,
                 onStreamLongPress = { stream -> streamActionsTarget = stream },
                 onRefresh = reloadStreams,
             )
@@ -962,7 +949,7 @@ private fun LazyListScope.streamSection(
                 )
             },
         ) { _, stream ->
-            val isDownloaded = stream.addonId == DOWNLOADED_ADDON_ID
+            val isDownloaded = stream.isLocalDownload
             val isSelectable = stream.isSelectableForPlayback(debridEnabled)
             val isUnsupportedTorrentStream =
                 stream.needsLocalDebridResolve &&
@@ -1005,7 +992,7 @@ internal fun splitPinnedSources(
     groups: List<AddonStreamGroup>,
     pinnedSourceIds: List<String>,
 ): PinnedFirstStreamGroups {
-    val (downloaded, nonDownloaded) = groups.partition { it.addonId == DOWNLOADED_ADDON_ID }
+    val (downloaded, nonDownloaded) = groups.partition { it.isLocalDownload }
     if (pinnedSourceIds.isEmpty()) return PinnedFirstStreamGroups(downloaded, nonDownloaded)
 
     val pinnedRank = HashMap<String, Int>(pinnedSourceIds.size)
@@ -1295,7 +1282,7 @@ private fun StreamActionsSheet(
                     }
                 },
             )
-            if (stream.addonId != DOWNLOADED_ADDON_ID) {
+            if (!stream.isLocalDownload) {
                 NuvioBottomSheetActionRow(
                     icon = Icons.Rounded.Download,
                     title = stringResource(Res.string.streams_download_file),

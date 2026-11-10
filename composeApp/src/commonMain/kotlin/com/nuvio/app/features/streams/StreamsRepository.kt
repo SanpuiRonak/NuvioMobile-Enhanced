@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import nuvio.composeapp.generated.resources.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.jetbrains.compose.resources.getString
 
 object StreamsRepository {
     private val log = Logger.withTag("StreamsRepo")
@@ -407,10 +409,10 @@ object StreamsRepository {
                 ).firstOrNull() ?: group
 
                 val availabilityJob = launch {
-                    val availabilityGroup = LocalDebridAvailabilityService.annotateCachedAvailability(
-                        groups = listOf(checkingGroup),
+                    val availabilityGroup = LocalDebridAvailabilityService.checkCachedAvailability(
+                        group = checkingGroup,
                         eligibleGroupIds = eligibleGroupIds,
-                    ).firstOrNull() ?: checkingGroup
+                    )
                     publishAddonGroup(StreamSourceLoader.presentStreamGroup(availabilityGroup, streamBadgeRules, debridSettings))
                 }
                 debridAvailabilityJobs += availabilityJob
@@ -679,8 +681,8 @@ object StreamsRepository {
             title = downloadedItem.episodeTitle ?: downloadedItem.title,
             description = streamSubtitle,
             url = localUri,
-            // Shown localized via displayAddonName(); this value is never displayed.
-            addonName = DOWNLOADED_ADDON_ID,
+            // StreamDestination forwards this name to the player as its provider label.
+            addonName = runBlocking { getString(Res.string.provider_downloaded) },
             addonId = DOWNLOADED_ADDON_ID,
             streamType = type,
             behaviorHints = StreamBehaviorHints(

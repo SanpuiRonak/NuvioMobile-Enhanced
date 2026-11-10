@@ -50,7 +50,7 @@ import com.nuvio.app.features.downloads.DownloadProgressBar
 import com.nuvio.app.features.downloads.DownloadProgressSpinner
 import com.nuvio.app.features.downloads.DownloadRevealImage
 import com.nuvio.app.features.downloads.DownloadStatus
-import com.nuvio.app.features.downloads.StoredDownloadedShowMeta
+import com.nuvio.app.features.downloads.StoredOfflineMeta
 import com.nuvio.app.features.downloads.animatedDownloadProgress
 import com.nuvio.app.features.downloads.formatDownloadBadgeProgress
 import com.nuvio.app.features.downloads.sortedForSeriesDownloads
@@ -61,7 +61,7 @@ import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
 /** A library title with downloads still in progress, shown as a filling poster. */
-data class ActiveDownloadShelfItem(
+internal data class ActiveDownloadCard(
     val title: String,
     val poster: String?,
     val isShow: Boolean,
@@ -90,13 +90,13 @@ internal fun buildDownloadedSections(
     savedSections: List<LibrarySection>,
     savedItems: List<LibraryItem>,
     downloadItems: List<DownloadItem>,
-    offlineMetadataFor: (showId: String) -> StoredDownloadedShowMeta?,
+    offlineMetadataFor: (showId: String) -> StoredOfflineMeta?,
 ): List<LibrarySection> {
     if (downloadItems.isEmpty()) return emptyList()
 
     val savedItemsById = savedItems.associateBy { it.id }
     val downloadedTitles = downloadItems
-        .groupBy { if (it.isEpisode) it.parentMetaId else it.parentMetaId.ifBlank { it.id } }
+        .groupBy { it.contentId }
         .map { (contentId, downloads) ->
             val offlineMeta = offlineMetadataFor(contentId)
             val saved = savedItemsById[contentId] ?: savedItemsById[downloads.first().id]
@@ -130,7 +130,7 @@ internal fun buildDownloadedSections(
     return sections
 }
 
-private fun LibraryItem.withReleaseInfoFallback(offlineMeta: StoredDownloadedShowMeta?): LibraryItem {
+private fun LibraryItem.withReleaseInfoFallback(offlineMeta: StoredOfflineMeta?): LibraryItem {
     val fallback = offlineMeta?.releaseInfo?.takeIf { it.isNotBlank() }
     return if (releaseInfo.isNullOrBlank() && fallback != null) copy(releaseInfo = fallback) else this
 }
@@ -138,7 +138,7 @@ private fun LibraryItem.withReleaseInfoFallback(offlineMeta: StoredDownloadedSho
 /** A library entry for a downloaded title that isn't saved, built from what the downloads know. */
 private fun List<DownloadItem>.toLibraryItem(
     contentId: String,
-    offlineMeta: StoredDownloadedShowMeta?,
+    offlineMeta: StoredOfflineMeta?,
 ): LibraryItem {
     val first = first()
     val defaultType = if (first.isEpisode) "series" else "movie"
@@ -163,11 +163,11 @@ private fun List<DownloadItem>.toLibraryItem(
 internal fun activeDownloadShelfItem(
     item: LibraryItem,
     allDownloads: List<DownloadItem>,
-): ActiveDownloadShelfItem? {
+): ActiveDownloadCard? {
     if (!item.isSeries) {
-        val movie = allDownloads.firstOrNull { !it.isEpisode && (it.id == item.id || it.parentMetaId == item.id) }
+        val movie = allDownloads.firstOrNull { !it.isEpisode && it.contentId == item.id }
         if (movie == null || movie.status == DownloadStatus.Completed) return null
-        return ActiveDownloadShelfItem(
+        return ActiveDownloadCard(
             title = item.name.ifBlank { movie.title },
             poster = item.poster ?: movie.poster,
             isShow = false,
@@ -193,7 +193,7 @@ internal fun activeDownloadShelfItem(
             else -> 0f
         }
     }
-    return ActiveDownloadShelfItem(
+    return ActiveDownloadCard(
         title = item.name,
         poster = item.poster,
         isShow = true,
@@ -212,7 +212,7 @@ internal fun activeDownloadShelfItem(
 
 @Composable
 internal fun ActiveDownloadPosterCard(
-    item: ActiveDownloadShelfItem,
+    item: ActiveDownloadCard,
     posterPattern: String,
     onClick: () -> Unit,
     onTogglePause: (() -> Unit)?,
@@ -290,7 +290,7 @@ private fun BoxScope.PosterPlaceholder(isQueued: Boolean) {
 
 @Composable
 private fun StatusBadge(
-    item: ActiveDownloadShelfItem,
+    item: ActiveDownloadCard,
     progress: Float,
     modifier: Modifier = Modifier,
 ) {
@@ -405,7 +405,7 @@ private fun BoxScope.MovieProgressOverlay(progress: Float?) {
 }
 
 @Composable
-private fun PosterCaption(item: ActiveDownloadShelfItem, progress: Float) {
+private fun PosterCaption(item: ActiveDownloadCard, progress: Float) {
     val captionColor = if (item.status == DownloadStatus.Queued) {
         MaterialTheme.colorScheme.primary
     } else {
@@ -444,7 +444,7 @@ private fun PosterCaption(item: ActiveDownloadShelfItem, progress: Float) {
 }
 
 @Composable
-private fun ActiveDownloadShelfItem.captionText(): String {
+private fun ActiveDownloadCard.captionText(): String {
     if (isShow) {
         return stringResource(Res.string.downloads_episodes_out_of_downloaded, completedEpisodeCount, totalEpisodeCount)
     }

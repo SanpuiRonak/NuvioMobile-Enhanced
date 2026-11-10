@@ -1,5 +1,6 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.details.seasonLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,7 +66,6 @@ import nuvio.composeapp.generated.resources.compose_player_panel_streams
 import nuvio.composeapp.generated.resources.compose_player_playing
 import nuvio.composeapp.generated.resources.episodes_season
 import nuvio.composeapp.generated.resources.episodes_specials
-import com.nuvio.app.features.downloads.seasonLabel
 import nuvio.composeapp.generated.resources.party_shared_by
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.core.i18n.localizedEpisodeTitle

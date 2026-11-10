@@ -43,15 +43,6 @@ import org.jetbrains.compose.resources.stringResource
 
 private const val PROGRESS_ANIMATION_MS = 400
 
-/** "Specials" for season 0, otherwise "Season N". */
-@Composable
-internal fun seasonLabel(season: Int): String =
-    if (season == 0) {
-        stringResource(Res.string.episodes_specials)
-    } else {
-        stringResource(Res.string.episodes_season, season)
-    }
-
 /** [progress] animated towards each new value, so progress bars move smoothly. */
 @Composable
 internal fun animatedDownloadProgress(progress: Float): Float {

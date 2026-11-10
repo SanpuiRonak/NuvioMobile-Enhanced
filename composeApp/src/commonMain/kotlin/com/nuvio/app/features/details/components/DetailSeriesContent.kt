@@ -1,5 +1,6 @@
 package com.nuvio.app.features.details.components
 
+import com.nuvio.app.features.details.seasonLabel
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
@@ -110,7 +111,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.glass.ambientLiquidGlass
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
 import com.nuvio.app.features.downloads.DownloadItem
-import com.nuvio.app.features.downloads.seasonLabel
 import com.nuvio.app.features.downloads.EpisodeDownloadIndex
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
@@ -1079,7 +1079,7 @@ private fun EpisodeHorizontalCard(
                     backgroundAlpha = 0.42f,
                 )
                 if (downloadItem != null) {
-                    EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
+                    EpisodeDownloadBadge(downloadItem = downloadItem)
                 }
             }
 
@@ -1322,7 +1322,10 @@ internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> Downl
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
     }.collectAsStateWithLifecycle()
-    val index = remember(downloadsUiState.items, metaId) {
+    val downloadIndexKey = remember(downloadsUiState.items) {
+        downloadsUiState.items.map { it.id to it.status }
+    }
+    val index = remember(downloadIndexKey, metaId) {
         EpisodeDownloadIndex.build(downloadsUiState.items, metaId)
     }
     return remember(index) { { video -> index.find(video.season, video.episode, video.id) } }
@@ -1332,7 +1335,6 @@ internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> Downl
 internal fun EpisodeDownloadBadge(
     downloadItem: DownloadItem,
     modifier: Modifier = Modifier,
-    compact: Boolean = false,
 ) {
     if (downloadItem.status == DownloadStatus.Failed) return
 
@@ -1354,7 +1356,7 @@ internal fun EpisodeDownloadBadge(
         modifier = modifier
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
-            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 2.dp),
+            .padding(horizontal = 5.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1380,7 +1382,7 @@ internal fun EpisodeDownloadBadge(
         Text(
             text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = if (compact) 9.sp else 10.sp,
+                fontSize = 9.sp,
                 letterSpacing = 0.2.sp,
             ),
             fontWeight = FontWeight.Bold,
@@ -1606,7 +1608,7 @@ private fun EpisodeListCard(
                         backgroundAlpha = 0.85f,
                     )
                     if (downloadItem != null) {
-                        EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
+                        EpisodeDownloadBadge(downloadItem = downloadItem)
                     }
                 }
 

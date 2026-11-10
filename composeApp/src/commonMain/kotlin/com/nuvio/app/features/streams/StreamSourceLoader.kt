@@ -35,7 +35,7 @@ internal data class StreamSourceTargets(
     val pluginProviderGroups: List<PluginProviderGroup>,
     val preferredGroupIds: Set<String>,
     val installedAddonOrder: List<String>,
-    val installedAddonIds: Set<String>,
+    val streamAddonIds: Set<String>,
     /** Enabled addons before filtering by stream support; zero means none are installed. */
     val enabledAddonCount: Int,
     val pluginScraperCount: Int,
@@ -104,7 +104,7 @@ internal object StreamSourceLoader {
             pluginProviderGroups = pluginProviderGroups,
             preferredGroupIds = preferredGroupIds,
             installedAddonOrder = installedAddonOrder,
-            installedAddonIds = installedAddonIds,
+            streamAddonIds = installedAddonIds,
             enabledAddonCount = installedAddons.size,
             pluginScraperCount = pluginScrapers.size,
         )
@@ -234,23 +234,7 @@ internal object StreamSourceLoader {
             return group
         }
 
-        val shouldWaitForCacheCheck = LocalDebridAvailabilityService.hasPendingCacheCheck(
-            groups = listOf(group),
-            eligibleGroupIds = eligibleGroupIds,
-        )
-        if (!shouldWaitForCacheCheck) {
-            return group
-        }
-
-        val checkingGroup = LocalDebridAvailabilityService.markChecking(
-            groups = listOf(group),
-            eligibleGroupIds = eligibleGroupIds,
-        ).firstOrNull() ?: group
-
-        return LocalDebridAvailabilityService.annotateCachedAvailability(
-            groups = listOf(checkingGroup),
-            eligibleGroupIds = eligibleGroupIds,
-        ).firstOrNull() ?: checkingGroup
+        return LocalDebridAvailabilityService.checkCachedAvailability(group, eligibleGroupIds)
     }
 
     private fun failedGroup(addonName: String, addonId: String, error: Throwable) = AddonStreamGroup(
@@ -287,11 +271,11 @@ internal object StreamSourceLoader {
             targets.streamAddons.map { addon ->
                 StreamSource(addon.addonName, addon.addonId) {
                     val group = fetchAddonGroup(addon, type, videoId, forceRefresh = false)
-                    checkDebridCache(group, targets.installedAddonIds)
+                    checkDebridCache(group, targets.streamAddonIds)
                 }
             } + targets.pluginProviderGroups.map { providerGroup ->
                 StreamSource(providerGroup.addonName, providerGroup.addonId) {
-                    loadPluginProviderGroup(providerGroup, type, videoId, season, episode, streamBadgeRules)
+                    loadPluginProviderGroup(providerGroup, type, videoId, season, episode)
                 }
             } + targets.serverSources.map { source ->
                 StreamSource(source.addonName, source.addonId) { source.load() }
@@ -343,7 +327,6 @@ internal object StreamSourceLoader {
         videoId: String,
         season: Int?,
         episode: Int?,
-        streamBadgeRules: StreamBadgeRules,
     ): AddonStreamGroup = supervisorScope {
         val streams = providerGroup.scrapers
             .map { scraper ->
@@ -354,7 +337,7 @@ internal object StreamSourceLoader {
         AddonStreamGroup(
             addonName = providerGroup.addonName,
             addonId = providerGroup.addonId,
-            streams = StreamBadgePresentation.applyToStreams(streams, streamBadgeRules).sortedForGroupedDisplay(),
+            streams = streams.sortedForGroupedDisplay(),
             isLoading = false,
         )
     }

@@ -43,8 +43,7 @@ internal object StreamSourcePrefillSelector {
                     index = index,
                     stream = stream,
                     facts = DebridStreamMetadata.facts(stream, DebridStreamPreferences()),
-                    size = stream.clientResolve?.stream?.raw?.size?.takeIf(::isPlausibleFileSize)
-                        ?: stream.behaviorHints.videoSize?.takeIf(::isPlausibleFileSize),
+                    size = sizeBytes(stream),
                 )
             }
 
@@ -74,6 +73,10 @@ internal object StreamSourcePrefillSelector {
 
     private fun isPlausibleFileSize(size: Long): Boolean =
         size in MIN_VALID_FILE_SIZE_BYTES..MAX_VALID_FILE_SIZE_BYTES
+
+    fun sizeBytes(stream: StreamItem): Long? =
+        stream.clientResolve?.stream?.raw?.size?.takeIf(::isPlausibleFileSize)
+            ?: stream.behaviorHints.videoSize?.takeIf(::isPlausibleFileSize)
 }
 
 fun StreamItem.isResolverDependent(): Boolean =

@@ -115,8 +115,8 @@ internal fun LazyListScope.libraryVerticalContent(
     posterPattern: String,
     onPosterClick: ((LibraryItem) -> Unit)?,
     onPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)?,
-    activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? = null,
-    onActiveDownloadTogglePause: ((ActiveDownloadShelfItem) -> Unit)? = null,
+    activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadCard?)? = null,
+    onActiveDownloadTogglePause: ((ActiveDownloadCard) -> Unit)? = null,
 ) {
     items(
         items = projection.entries.chunked(columns),
@@ -148,16 +148,17 @@ internal fun LazyListScope.libraryVerticalContent(
             },
             cellOverride = { index, cellModifier ->
                 val activeDownload = activeDownloads[index]
-                if (activeDownload == null) false else {
-                    ActiveDownloadPosterCard(
-                        item = activeDownload,
-                        posterPattern = posterPattern,
-                        onClick = { onPosterClick?.invoke(rowEntries[index].item) },
-                        onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(activeDownload) } },
-                        modifier = cellModifier,
-                        fillMaxWidth = true,
-                    )
-                    true
+                activeDownload?.let { download ->
+                    @Composable {
+                        ActiveDownloadPosterCard(
+                            item = download,
+                            posterPattern = posterPattern,
+                            onClick = { onPosterClick?.invoke(rowEntries[index].item) },
+                            onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(download) } },
+                            modifier = cellModifier,
+                            fillMaxWidth = true,
+                        )
+                    }
                 }
             },
         )

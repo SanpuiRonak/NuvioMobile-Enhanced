@@ -1,5 +1,6 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.features.details.seasonLabel
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -194,7 +195,7 @@ fun DownloadsQueueDialog(
             confirmText = stringResource(Res.string.action_yes),
             dismissText = stringResource(Res.string.action_no),
             onConfirm = {
-                toDelete.forEach(DownloadsRepository::cancelDownload)
+                DownloadsRepository.cancelDownloads(toDelete)
                 selectedIds = selectedIds - toDelete.toSet()
                 pendingDeleteIds = null
             },

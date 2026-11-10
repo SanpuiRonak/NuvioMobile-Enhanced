@@ -307,7 +307,7 @@ fun LibraryScreen(
                 savedSections = uiState.sections,
                 savedItems = uiState.items,
                 downloadItems = downloadsUiState.items,
-                offlineMetadataFor = DownloadsRepository::getShowMetadata,
+                offlineMetadataFor = DownloadsRepository::getOfflineMetadata,
             )
         } else {
             uiState.sections
@@ -652,7 +652,7 @@ fun LibraryScreen(
             val effectivePosterLongClick: ((LibraryItem, LibrarySection) -> Unit)? = if (sourceMode == LibraryViewMode.Downloaded) {
                 { item, _ ->
                     val matchingDownloads = downloadsUiState.items.filter {
-                        it.parentMetaId == item.id || it.id == item.id
+                        it.contentId == item.id
                     }
                     if (matchingDownloads.isNotEmpty()) {
                         downloadPendingDeletionIds = matchingDownloads.map { it.id }
@@ -662,7 +662,7 @@ fun LibraryScreen(
                 onPosterLongClick
             }
 
-            val activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? =
+            val activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadCard?)? =
                 if (sourceMode == LibraryViewMode.Downloaded) {
                     remember(downloadsUiState.items) {
                         { item: LibraryItem -> activeDownloadShelfItem(item, downloadsUiState.items) }
@@ -671,7 +671,7 @@ fun LibraryScreen(
                     null
                 }
 
-            val onActiveDownloadTogglePause: (ActiveDownloadShelfItem) -> Unit = { activeItem ->
+            val onActiveDownloadTogglePause: (ActiveDownloadCard) -> Unit = { activeItem ->
                 val movie = activeItem.movieDownload
                 if (movie != null) {
                     DownloadsRepository.togglePause(movie.id)
@@ -902,13 +902,17 @@ fun LibraryScreen(
     if (!pendingDeletionIds.isNullOrEmpty()) {
         NuvioStatusModal(
             title = stringResource(Res.string.action_delete_confirm_title),
-            message = stringResource(Res.string.action_delete_confirm_message),
+            message = if (pendingDeletionIds.size > 1) {
+                stringResource(Res.string.downloads_delete_selected_confirm, pendingDeletionIds.size)
+            } else {
+                stringResource(Res.string.action_delete_confirm_message)
+            },
             isVisible = true,
             destructive = true,
             confirmText = stringResource(Res.string.action_yes),
             dismissText = stringResource(Res.string.action_no),
             onConfirm = {
-                pendingDeletionIds.forEach(DownloadsRepository::cancelDownload)
+                DownloadsRepository.cancelDownloads(pendingDeletionIds)
                 downloadPendingDeletionIds = null
             },
             onDismiss = { downloadPendingDeletionIds = null },
@@ -2163,8 +2167,8 @@ private fun LazyListScope.librarySections(
     onSectionViewAllClick: ((LibrarySection, LibrarySortOption) -> Unit)?,
     onPosterLongClick: ((LibraryItem, LibrarySection) -> Unit)?,
     onDisintegrated: (String) -> Unit,
-    activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadShelfItem?)? = null,
-    onActiveDownloadTogglePause: ((ActiveDownloadShelfItem) -> Unit)? = null,
+    activeDownloadItemFor: ((LibraryItem) -> ActiveDownloadCard?)? = null,
+    onActiveDownloadTogglePause: ((ActiveDownloadCard) -> Unit)? = null,
 ) {
     items(
         items = displaySections,

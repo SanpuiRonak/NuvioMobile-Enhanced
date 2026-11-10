@@ -1,5 +1,6 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.features.details.seasonLabel
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
@@ -193,13 +194,13 @@ private fun LazyListScope.downloadsRootContent(
             subtitle = null,
             onPlay = { onOpenDownload(item) },
             onDelete = { onDeleteDownload(item.id) },
-            onClick = onOpenMovie?.let { open -> { open(item.parentMetaId.ifBlank { item.id }, item.title) } },
+            onClick = onOpenMovie?.let { open -> { open(item.contentId, item.title) } },
         )
     }
 
     if (activeItems.isNotEmpty()) {
         item {
-            val hasDownloading = activeItems.statusCounts().hasActive
+            val hasActive = activeItems.statusCounts().hasActive
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -210,14 +211,14 @@ private fun LazyListScope.downloadsRootContent(
                 SectionTitle(stringResource(Res.string.downloads_section_active), padded = false)
                 Text(
                     text = stringResource(
-                        if (hasDownloading) Res.string.downloads_action_pause_all else Res.string.downloads_action_resume_all,
+                        if (hasActive) Res.string.downloads_action_pause_all else Res.string.downloads_action_resume_all,
                     ),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .clickable {
-                            if (hasDownloading) {
+                            if (hasActive) {
                                 DownloadsRepository.pauseActiveDownloads()
                             } else {
                                 DownloadsRepository.resumeOrRetryAllDownloads()
