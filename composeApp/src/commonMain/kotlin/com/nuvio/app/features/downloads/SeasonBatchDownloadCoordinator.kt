@@ -471,18 +471,7 @@ object SeasonBatchDownloadCoordinator {
             episodeTitle = episodeDetails?.title,
             episodeThumbnail = episodeDetails?.thumbnail,
             stream = stream,
-            episodeOverview = episodeDetails?.overview,
-            episodeReleased = episodeDetails?.released,
-            episodeRuntime = episodeDetails?.runtime,
-            episodeImdbRating = episodeDetails?.imdbRating,
-            episodeTmdbRating = episodeDetails?.tmdbRating,
-            episodeRating = episodeDetails?.let { it.rating ?: it.tmdbRating ?: it.imdbRating },
-            seasonPoster = episodeDetails?.let { it.seasonPoster ?: target.season?.let(meta.seasonPosters::get) },
-            showDescription = meta.description,
-            showGenres = meta.genres,
-            showReleaseInfo = meta.releaseInfo,
-            showImdbRating = meta.imdbRating,
-            showStatus = meta.status,
+            showMeta = meta,
         )
         if (result != DownloadEnqueueResult.Started && result != DownloadEnqueueResult.Replaced) {
             InAppLogger.warn("Downloads/Batch", "Enqueue returned ${result.name} for S${target.season}E${target.episode}")

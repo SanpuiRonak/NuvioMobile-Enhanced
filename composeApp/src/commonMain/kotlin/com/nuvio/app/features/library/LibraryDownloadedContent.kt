@@ -103,9 +103,10 @@ internal fun buildDownloadedSections(
         movies.distinctBy { it.parentMetaId.ifBlank { it.id } }.forEach { movie ->
             val id = movie.parentMetaId.ifBlank { movie.id }
             val existing = savedItemsById[id] ?: savedItemsById[movie.id]
+            val movieMeta = DownloadsRepository.getShowMetadata(id)
             if (existing != null) {
-                if (existing.releaseInfo.isNullOrBlank() && !movie.showReleaseInfo.isNullOrBlank()) {
-                    add(existing.copy(releaseInfo = movie.showReleaseInfo))
+                if (existing.releaseInfo.isNullOrBlank() && !movieMeta?.releaseInfo.isNullOrBlank()) {
+                    add(existing.copy(releaseInfo = movieMeta?.releaseInfo))
                 } else {
                     add(existing)
                 }
@@ -118,10 +119,10 @@ internal fun buildDownloadedSections(
                         poster = movie.poster,
                         banner = movie.background,
                         logo = movie.logo,
-                        description = movie.showDescription,
-                        releaseInfo = movie.showReleaseInfo,
-                        imdbRating = movie.showImdbRating,
-                        genres = movie.showGenres,
+                        description = movieMeta?.description,
+                        releaseInfo = movieMeta?.releaseInfo,
+                        imdbRating = movieMeta?.imdbRating,
+                        genres = movieMeta?.genres.orEmpty(),
                         posterShape = PosterShape.Poster,
                         imdbId = id.takeIf { it.startsWith("tt") },
                         savedAtEpochMs = movie.createdAtEpochMs,
@@ -136,7 +137,6 @@ internal fun buildDownloadedSections(
                 if (existing.releaseInfo.isNullOrBlank()) {
                     val showMeta = DownloadsRepository.getShowMetadata(showId)
                     val resolvedReleaseInfo = showMeta?.releaseInfo?.takeIf(String::isNotBlank)
-                        ?: episodes.firstNotNullOfOrNull { it.showReleaseInfo?.takeIf(String::isNotBlank) }
                     if (!resolvedReleaseInfo.isNullOrBlank()) {
                         add(existing.copy(releaseInfo = resolvedReleaseInfo))
                     } else {
@@ -161,12 +161,10 @@ internal fun buildDownloadedSections(
                             poster = showMeta?.poster ?: firstEpisode.poster,
                             banner = showMeta?.background ?: firstEpisode.background,
                             logo = showMeta?.logo ?: firstEpisode.logo,
-                            description = showMeta?.description ?: firstEpisode.showDescription,
-                            releaseInfo = showMeta?.releaseInfo?.takeIf(String::isNotBlank)
-                                ?: episodes.firstNotNullOfOrNull { it.showReleaseInfo?.takeIf(String::isNotBlank) }
-                                ?: firstEpisode.showReleaseInfo,
-                            imdbRating = showMeta?.imdbRating ?: firstEpisode.showImdbRating,
-                            genres = showMeta?.genres?.takeIf { it.isNotEmpty() } ?: firstEpisode.showGenres,
+                            description = showMeta?.description,
+                            releaseInfo = showMeta?.releaseInfo?.takeIf(String::isNotBlank),
+                            imdbRating = showMeta?.imdbRating,
+                            genres = showMeta?.genres.orEmpty(),
                             posterShape = PosterShape.Poster,
                             imdbId = showId.takeIf { it.startsWith("tt") },
                             savedAtEpochMs = latestEpoch,

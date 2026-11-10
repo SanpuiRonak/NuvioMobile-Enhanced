@@ -124,18 +124,6 @@ data class DownloadItem(
     val errorMessage: String? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
-    val episodeOverview: String? = null,
-    val episodeReleased: String? = null,
-    val episodeRuntime: Int? = null,
-    val episodeImdbRating: Double? = null,
-    val episodeTmdbRating: Double? = null,
-    val episodeRating: Double? = null,
-    val seasonPoster: String? = null,
-    val showDescription: String? = null,
-    val showGenres: List<String> = emptyList(),
-    val showReleaseInfo: String? = null,
-    val showImdbRating: String? = null,
-    val showStatus: String? = null,
 ) {
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null
@@ -213,21 +201,15 @@ internal fun DownloadItem.displayTitle(): String =
         title
     }
 
+/** Minimal episode details for a download whose show metadata doesn't list it. */
 fun DownloadItem.toMetaVideo(): MetaVideo =
     MetaVideo(
         id = videoId,
         title = displayTitle(),
-        released = episodeReleased,
         available = true,
         thumbnail = episodeThumbnail ?: background ?: poster,
-        seasonPoster = seasonPoster,
         season = seasonNumber,
         episode = episodeNumber,
-        overview = episodeOverview,
-        runtime = episodeRuntime,
-        tmdbRating = episodeTmdbRating,
-        imdbRating = episodeImdbRating,
-        rating = episodeRating ?: episodeTmdbRating ?: episodeImdbRating,
     )
 
 fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
@@ -307,7 +289,6 @@ fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): M
         downloadedEpisodes.map { it.toMetaVideo() }
     }
 
-    val mergedPosters = downloadedEpisodes.seasonPosters() + seasonPosters
 
     return MetaDetails(
         id = showId,
@@ -321,51 +302,26 @@ fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): M
         status = status,
         imdbRating = imdbRating,
         genres = genres,
-        seasonPosters = mergedPosters,
+        seasonPosters = seasonPosters,
         videos = allVideos,
         cast = cast.map { it.toMetaPerson() },
     )
 }
 
+/** Basic details for downloads saved without show metadata (e.g. before it was stored). */
 fun List<DownloadItem>.toOfflineMetaDetails(showId: String): MetaDetails {
     val showEpisodes = filter { it.parentMetaId == showId }
     val first = showEpisodes.firstOrNull()
-    val showTitle = first?.title.orEmpty()
-    val poster = showEpisodes.firstNotNullOfOrNull { it.poster }
-    val background = showEpisodes.firstNotNullOfOrNull { it.background }
-    val logo = showEpisodes.firstNotNullOfOrNull { it.logo }
-    val description = showEpisodes.firstNotNullOfOrNull { it.showDescription }
-    val releaseInfo = showEpisodes.firstNotNullOfOrNull { it.showReleaseInfo }
-    val status = showEpisodes.firstNotNullOfOrNull { it.showStatus }
-    val imdbRating = showEpisodes.firstNotNullOfOrNull { it.showImdbRating }
-    val genres = showEpisodes.firstOrNull { it.showGenres.isNotEmpty() }?.showGenres ?: emptyList()
-
-    val seasonPosters = showEpisodes.seasonPosters()
-
-    val videos = showEpisodes.sortedForSeriesDownloads().map { it.toMetaVideo() }
-
     return MetaDetails(
         id = showId,
         type = first?.parentMetaType ?: "series",
-        name = showTitle,
-        poster = poster,
-        background = background,
-        logo = logo,
-        description = description,
-        releaseInfo = releaseInfo,
-        status = status,
-        imdbRating = imdbRating,
-        genres = genres,
-        seasonPosters = seasonPosters,
-        videos = videos,
+        name = first?.title.orEmpty(),
+        poster = showEpisodes.firstNotNullOfOrNull { it.poster },
+        background = showEpisodes.firstNotNullOfOrNull { it.background },
+        logo = showEpisodes.firstNotNullOfOrNull { it.logo },
+        videos = showEpisodes.sortedForSeriesDownloads().map { it.toMetaVideo() },
     )
 }
-
-/** The first known poster for each season among these downloads. */
-private fun List<DownloadItem>.seasonPosters(): Map<Int, String> =
-    asReversed()
-        .mapNotNull { item -> item.seasonNumber?.let { season -> item.seasonPoster?.let { season to it } } }
-        .toMap()
 
 internal fun formatBytes(bytes: Long): String {
     if (bytes <= 0L) return "0 ${localizedByteUnit("B")}"

@@ -108,6 +108,12 @@ object DownloadsRepository {
 
     fun updateShowMetadataFromMetaDetails(meta: MetaDetails) {
         ensureLoaded()
+        mergeShowMetadata(meta)
+        persist()
+    }
+
+    /** Merges fresh details into the stored offline copy, keeping stored values the new copy lacks. */
+    private fun mergeShowMetadata(meta: MetaDetails) {
         val existing = showMetadata[meta.id]
         val videosToSave = if (meta.videos.isNotEmpty()) {
             meta.videos.map { it.toStored() }
@@ -136,78 +142,6 @@ object DownloadsRepository {
             cast = castToSave,
         )
         showMetadata[meta.id] = updated
-
-        var changed = false
-        val currentItems = _uiState.value.items.map { item ->
-            if (item.parentMetaId == meta.id && item.isEpisode) {
-                val video = meta.videos.firstOrNull {
-                    it.season == item.seasonNumber && it.episode == item.episodeNumber
-                }
-                var updatedItem = item
-                if (item.showDescription == null && meta.description != null) {
-                    updatedItem = updatedItem.copy(showDescription = meta.description)
-                    changed = true
-                }
-                if (item.showGenres.isEmpty() && meta.genres.isNotEmpty()) {
-                    updatedItem = updatedItem.copy(showGenres = meta.genres)
-                    changed = true
-                }
-                if (item.showReleaseInfo == null && meta.releaseInfo != null) {
-                    updatedItem = updatedItem.copy(showReleaseInfo = meta.releaseInfo)
-                    changed = true
-                }
-                if (item.showImdbRating == null && meta.imdbRating != null) {
-                    updatedItem = updatedItem.copy(showImdbRating = meta.imdbRating)
-                    changed = true
-                }
-                if (item.showStatus == null && meta.status != null) {
-                    updatedItem = updatedItem.copy(showStatus = meta.status)
-                    changed = true
-                }
-                if (video != null) {
-                    if (item.episodeOverview == null && video.overview != null) {
-                        updatedItem = updatedItem.copy(episodeOverview = video.overview)
-                        changed = true
-                    }
-                    if (item.episodeReleased == null && video.released != null) {
-                        updatedItem = updatedItem.copy(episodeReleased = video.released)
-                        changed = true
-                    }
-                    if (item.episodeRuntime == null && video.runtime != null) {
-                        updatedItem = updatedItem.copy(episodeRuntime = video.runtime)
-                        changed = true
-                    }
-                    if (item.episodeImdbRating == null && video.imdbRating != null) {
-                        updatedItem = updatedItem.copy(episodeImdbRating = video.imdbRating)
-                        changed = true
-                    }
-                    if (item.episodeTmdbRating == null && video.tmdbRating != null) {
-                        updatedItem = updatedItem.copy(episodeTmdbRating = video.tmdbRating)
-                        changed = true
-                    }
-                    if (item.episodeRating == null && video.rating != null) {
-                        updatedItem = updatedItem.copy(episodeRating = video.rating)
-                        changed = true
-                    }
-                    val seasonPoster = video.seasonPoster ?: meta.seasonPosters[item.seasonNumber]
-                    if (item.seasonPoster == null && seasonPoster != null) {
-                        updatedItem = updatedItem.copy(seasonPoster = seasonPoster)
-                        changed = true
-                    }
-                    if (item.episodeThumbnail == null && video.thumbnail != null) {
-                        updatedItem = updatedItem.copy(episodeThumbnail = video.thumbnail)
-                        changed = true
-                    }
-                }
-                updatedItem
-            } else {
-                item
-            }
-        }
-        if (changed) {
-            publish(currentItems)
-        }
-        persist()
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -287,17 +221,7 @@ object DownloadsRepository {
         episodeThumbnail: String?,
         stream: StreamItem,
         episodeOverview: String? = null,
-        episodeReleased: String? = null,
-        episodeRuntime: Int? = null,
-        episodeImdbRating: Double? = null,
-        episodeTmdbRating: Double? = null,
-        episodeRating: Double? = null,
-        seasonPoster: String? = null,
-        showDescription: String? = null,
-        showGenres: List<String> = emptyList(),
-        showReleaseInfo: String? = null,
-        showImdbRating: String? = null,
-        showStatus: String? = null,
+        showMeta: MetaDetails? = null,
     ): DownloadEnqueueResult {
         ensureLoaded()
 
@@ -317,47 +241,32 @@ object DownloadsRepository {
             episodeNumber = episodeNumber,
         )
 
-        val cachedMeta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
-        val cachedVideo = cachedMeta?.videos?.firstOrNull {
-            it.season == seasonNumber && it.episode == episodeNumber
-        }
-
-        val resolvedEpisodeOverview = episodeOverview ?: cachedVideo?.overview
-        val resolvedEpisodeReleased = episodeReleased ?: cachedVideo?.released
-        val resolvedEpisodeRuntime = episodeRuntime ?: cachedVideo?.runtime
-        val resolvedEpisodeImdbRating = episodeImdbRating ?: cachedVideo?.imdbRating
-        val resolvedEpisodeTmdbRating = episodeTmdbRating ?: cachedVideo?.tmdbRating
-        val resolvedEpisodeRating = episodeRating ?: cachedVideo?.rating ?: cachedVideo?.tmdbRating ?: cachedVideo?.imdbRating
-        val resolvedSeasonPoster = seasonPoster ?: cachedVideo?.seasonPoster ?: seasonNumber?.let { cachedMeta?.seasonPosters?.get(it) }
-        val resolvedEpisodeThumbnail = episodeThumbnail ?: cachedVideo?.thumbnail
-
-        val resolvedShowDescription = showDescription ?: cachedMeta?.description
-        val resolvedShowGenres = showGenres.takeIf { it.isNotEmpty() } ?: cachedMeta?.genres ?: emptyList()
-        val resolvedShowReleaseInfo = showReleaseInfo ?: cachedMeta?.releaseInfo
-        val resolvedShowImdbRating = showImdbRating ?: cachedMeta?.imdbRating
-        val resolvedShowStatus = showStatus ?: cachedMeta?.status
-
-        // Cache show metadata offline
-        if (cachedMeta != null) {
-            updateShowMetadataFromMetaDetails(cachedMeta)
+        val meta = showMeta ?: MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+        val resolvedEpisodeThumbnail = episodeThumbnail ?: meta?.videos
+            ?.firstOrNull { it.season == seasonNumber && it.episode == episodeNumber }
+            ?.thumbnail
+        if (meta != null) {
+            mergeShowMetadata(meta)
         } else {
-            val existing = showMetadata[parentMetaId]
-            showMetadata[parentMetaId] = StoredDownloadedShowMeta(
+            storeBasicShowMetadata(
                 showId = parentMetaId,
-                title = title,
                 type = parentMetaType,
-                poster = poster ?: existing?.poster,
-                background = background ?: existing?.background,
-                logo = logo ?: existing?.logo,
-                description = resolvedShowDescription ?: existing?.description,
-                releaseInfo = resolvedShowReleaseInfo ?: existing?.releaseInfo,
-                status = resolvedShowStatus ?: existing?.status,
-                imdbRating = resolvedShowImdbRating ?: existing?.imdbRating,
-                genres = resolvedShowGenres.takeIf { it.isNotEmpty() } ?: existing?.genres ?: emptyList(),
-                seasonPosters = existing?.seasonPosters.orEmpty() +
-                    listOfNotNull(seasonNumber?.let { season -> resolvedSeasonPoster?.let { season to it } }),
-                videos = existing?.videos.orEmpty(),
-                cast = existing?.cast.orEmpty(),
+                title = title,
+                logo = logo,
+                poster = poster,
+                background = background,
+                episode = if (seasonNumber != null && episodeNumber != null) {
+                    StoredDownloadedVideoMeta(
+                        id = videoId,
+                        title = episodeTitle.orEmpty(),
+                        thumbnail = resolvedEpisodeThumbnail,
+                        season = seasonNumber,
+                        episode = episodeNumber,
+                        overview = episodeOverview,
+                    )
+                } else {
+                    null
+                },
             )
         }
 
@@ -427,18 +336,6 @@ object DownloadsRepository {
             errorMessage = null,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
-            episodeOverview = resolvedEpisodeOverview,
-            episodeReleased = resolvedEpisodeReleased,
-            episodeRuntime = resolvedEpisodeRuntime,
-            episodeImdbRating = resolvedEpisodeImdbRating,
-            episodeTmdbRating = resolvedEpisodeTmdbRating,
-            episodeRating = resolvedEpisodeRating,
-            seasonPoster = resolvedSeasonPoster,
-            showDescription = resolvedShowDescription,
-            showGenres = resolvedShowGenres,
-            showReleaseInfo = resolvedShowReleaseInfo,
-            showImdbRating = resolvedShowImdbRating,
-            showStatus = resolvedShowStatus,
         )
 
         currentItems.add(0, item)
@@ -453,6 +350,27 @@ object DownloadsRepository {
         } else {
             DownloadEnqueueResult.Started
         }
+    }
+
+    /** Records what is known about a title when no full details are cached, e.g. from a deep link. */
+    private fun storeBasicShowMetadata(
+        showId: String,
+        type: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        episode: StoredDownloadedVideoMeta?,
+    ) {
+        val existing = showMetadata[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title, type = type)
+        val hasEpisode = episode == null ||
+            existing.videos.any { it.season == episode.season && it.episode == episode.episode }
+        showMetadata[showId] = existing.copy(
+            logo = existing.logo ?: logo,
+            poster = existing.poster ?: poster,
+            background = existing.background ?: background,
+            videos = if (hasEpisode) existing.videos else existing.videos + episode!!,
+        )
     }
 
     fun advanceDownloadQueue() {
@@ -628,7 +546,11 @@ object DownloadsRepository {
         DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
         DownloadsPlatformDownloader.removePartialFile(item.fileName)
 
-        publish(_uiState.value.items.filterNot { it.id == downloadId })
+        val remainingItems = _uiState.value.items.filterNot { it.id == downloadId }
+        if (remainingItems.none { it.parentMetaId == item.parentMetaId }) {
+            showMetadata.remove(item.parentMetaId)
+        }
+        publish(remainingItems)
         persist()
 
         if (wasDownloading) {
