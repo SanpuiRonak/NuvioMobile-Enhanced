@@ -1328,7 +1328,12 @@ internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> Downl
     val index = remember(downloadIndexKey, metaId) {
         EpisodeDownloadIndex.build(downloadsUiState.items, metaId)
     }
-    return remember(index) { { video -> index.find(video.season, video.episode, video.id) } }
+    return remember(index, downloadsUiState.items) {
+        { video ->
+            val matchId = index.find(video.season, video.episode, video.id)?.id
+            downloadsUiState.items.firstOrNull { it.id == matchId }
+        }
+    }
 }
 
 @Composable
