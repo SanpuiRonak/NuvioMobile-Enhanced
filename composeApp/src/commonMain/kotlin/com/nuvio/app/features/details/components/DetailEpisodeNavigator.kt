@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import com.nuvio.app.features.details.EpisodeRatingsVisibility
 import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.details.groupedEpisodesForDisplay
 import com.nuvio.app.features.details.seasonSortKey
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
@@ -560,6 +561,7 @@ internal fun LazyListScope.detailEpisodeListItems(
     onEpisodeClick: (MetaVideo) -> Unit,
     onEpisodeLongPress: (MetaVideo) -> Unit,
     onSeasonLongPress: (Int) -> Unit,
+    episodeDownloadFor: (MetaVideo) -> DownloadItem?,
 ): Int {
     val grouped = navigator.grouped(meta.videos) { meta.groupedEpisodesForDisplay() }
     if (grouped.isEmpty()) return 0
@@ -626,6 +628,7 @@ internal fun LazyListScope.detailEpisodeListItems(
                     progressByVideoId = progressByVideoId,
                     watchedKeys = watchedKeys,
                     episodeRatings = emptyMap(),
+                    episodeDownloadFor = episodeDownloadFor,
                     episodeRatingsVisibility = episodeRatingsVisibility,
                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                     onEpisodeClick = onEpisodeClick,

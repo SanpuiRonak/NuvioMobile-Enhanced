@@ -133,6 +133,8 @@ import com.nuvio.app.features.details.components.DetailSeriesContent
 import com.nuvio.app.features.details.components.EpisodeNavigatorState
 import com.nuvio.app.features.details.components.detailEpisodeListItems
 import com.nuvio.app.features.details.components.rememberEpisodeNavigatorState
+import com.nuvio.app.features.details.components.rememberEpisodeDownloadLookup
+import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.details.components.DetailTrailersSection
 import com.nuvio.app.features.details.components.EpisodeWatchedActionSheet
 import com.nuvio.app.features.details.components.SeasonWatchedActionSheet
@@ -938,6 +940,7 @@ fun MetaDetailsScreen(
                     ?.let { handler -> { runPlayAction(handler, activeResumePositionMs) } }
 
                 val episodeNavigator = rememberEpisodeNavigatorState(meta.id)
+                val episodeDownloadFor = rememberEpisodeDownloadLookup(meta.id)
                 val showDownloadButton by remember {
                     DownloadsSettingsRepository.ensureLoaded()
                     DownloadsSettingsRepository.showDownloadButton
@@ -1412,6 +1415,7 @@ fun MetaDetailsScreen(
                                         sharedTransitionScope = sharedTransitionScope,
                                         animatedVisibilityScope = animatedVisibilityScope,
                                         episodeNavigator = episodeNavigator,
+                                        episodeDownloadFor = episodeDownloadFor,
                                         listState = listState,
                                         leadingItemCount = 1,
                                         stickyBackground = heroGradientColor ?: colorScheme.background,
@@ -2209,6 +2213,7 @@ private fun LazyListScope.configuredMetaSectionItems(
     sharedTransitionScope: SharedTransitionScope?,
     animatedVisibilityScope: AnimatedVisibilityScope?,
     episodeNavigator: EpisodeNavigatorState? = null,
+    episodeDownloadFor: (MetaVideo) -> DownloadItem? = { null },
     listState: LazyListState? = null,
     leadingItemCount: Int = 0,
     stickyBackground: Color = Color.Unspecified,
@@ -2329,6 +2334,7 @@ private fun LazyListScope.configuredMetaSectionItems(
             onEpisodeClick = onEpisodeClick,
             onEpisodeLongPress = onEpisodeLongPress,
             onSeasonLongPress = onSeasonLongPress,
+            episodeDownloadFor = episodeDownloadFor,
         )
         emittedItemCount += emitted
         return emitted > 0

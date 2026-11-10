@@ -1,24 +1,16 @@
 package com.nuvio.app.features.downloads
 
-import com.nuvio.app.core.logging.InAppLogger
-import com.nuvio.app.core.ui.NuvioToastController
-import com.nuvio.app.features.debrid.DebridProviders
-import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamFacts
 import com.nuvio.app.features.debrid.DebridStreamMetadata
 import com.nuvio.app.features.debrid.DebridStreamPreferences
-import com.nuvio.app.features.debrid.DirectDebridPlayableResult
-import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.findEmbeddedStreams
 import com.nuvio.app.features.details.normalizeSeasonNumber
 import com.nuvio.app.features.details.seasonSortKey
-import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamSourceLoader
 import com.nuvio.app.features.streams.StreamSourcePrefillSelector
-import com.nuvio.app.features.streams.isResolverDependent
 import com.nuvio.app.features.watched.releasedEpisodesForSeason
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
@@ -34,9 +26,6 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 
 enum class EpisodePlanStatus {
     AlreadyDownloaded,
@@ -135,7 +124,7 @@ internal fun DebridStreamFacts.qualityBadge(): String? =
         ?: quality.name.replace("_", "-").takeUnless { it == "UNKNOWN" }
 
 /** The ids needed to load and download one planned episode (or a movie). */
-private data class BatchEpisodeTarget(
+internal data class BatchEpisodeTarget(
     val season: Int?,
     val episode: Int?,
     val streamVideoId: String,
@@ -143,7 +132,7 @@ private data class BatchEpisodeTarget(
     val isSingleTitle: Boolean get() = episode == null
 }
 
-private fun MetaDetails.batchTargetFor(video: MetaVideo, planSeason: Int): BatchEpisodeTarget {
+internal fun MetaDetails.batchTargetFor(video: MetaVideo, planSeason: Int): BatchEpisodeTarget {
     val episode = video.episode
         ?: return BatchEpisodeTarget(
             season = null,
@@ -183,8 +172,6 @@ object BatchDownloadCoordinator {
     /** Parent of the open plan's source loading; cancelled when the plan closes. */
     private var planJob: Job? = null
 
-    /** Parent of every running queue job; replaced when queued work must stop. */
-    private var queueJob = SupervisorJob()
 
     fun openPlan(
         meta: MetaDetails,
@@ -442,114 +429,17 @@ object BatchDownloadCoordinator {
                 plan.seasonPlans[season]?.episodes.orEmpty().mapNotNull { item ->
                     val key = item.episode.batchKey(season)
                     if (!plan.isSingleTitle && key !in plan.selectedEpisodeKeys) return@mapNotNull null
-                    item.streamCandidate?.let { stream -> Triple(season, item.episode, stream) }
+                    item.streamCandidate?.let { stream -> BatchQueueItem(season, item.episode, stream) }
                 }
             }
-            .sortedWith(compareBy({ it.second.season ?: 0 }, { it.second.episode ?: 0 }))
+            .sortedWith(compareBy({ it.episode.season ?: 0 }, { it.episode.episode ?: 0 }))
 
         closePlan()
         if (itemsToQueue.isEmpty()) return BatchQueueResult.NothingToQueue
 
-        val startingProfileId = ProfileRepository.activeProfileId
-        scope.launch(queueJob + Dispatchers.Default) {
-            var failedCount = 0
-            for ((season, episode, stream) in itemsToQueue) {
-                val target = plan.meta.batchTargetFor(episode, season)
-                val streamToEnqueue = when (val resolved = resolveDownloadableStream(stream, target)) {
-                    is StreamCandidateResolution.Success -> resolved.stream
-                    StreamCandidateResolution.MissingApiKey -> {
-                        // Every remaining episode needs the same resolver, so stop the batch.
-                        InAppLogger.warn("Downloads/Batch", "Missing debrid API key, stopping batch queue")
-                        failedCount += itemsToQueue.size - itemsToQueue.indexOfFirst { it.second == episode }
-                        break
-                    }
-                    is StreamCandidateResolution.Failed -> {
-                        InAppLogger.warn("Downloads/Batch", "Skipping S${target.season}E${target.episode}: ${resolved.reason}")
-                        failedCount++
-                        continue
-                    }
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (ProfileRepository.activeProfileId != startingProfileId) return@withContext
-                    if (!enqueue(plan.meta, episode, target, streamToEnqueue)) failedCount++
-                }
-            }
-            if (failedCount > 0) {
-                withContext(Dispatchers.Main) {
-                    NuvioToastController.show(getString(if (failedCount == 1) Res.string.batch_download_failed_single else Res.string.batch_download_failed_multiple, failedCount))
-                }
-            }
-        }
+        BatchDownloadQueuer.queue(plan.meta, itemsToQueue)
         return BatchQueueResult.Queued
     }
-
-    private fun enqueue(meta: MetaDetails, episode: MetaVideo, target: BatchEpisodeTarget, stream: StreamItem): Boolean {
-        val episodeDetails = episode.takeUnless { target.isSingleTitle }
-        val result = DownloadsRepository.enqueueFromStream(
-            contentType = meta.type,
-            videoId = target.streamVideoId,
-            parentMetaId = meta.id,
-            parentMetaType = meta.type,
-            title = meta.name,
-            logo = meta.logo,
-            poster = meta.poster,
-            background = meta.background,
-            seasonNumber = target.season,
-            episodeNumber = target.episode,
-            episodeTitle = episodeDetails?.title,
-            episodeThumbnail = episodeDetails?.thumbnail,
-            stream = stream,
-            showMeta = meta,
-        )
-        val succeeded = result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced || result == DownloadEnqueueResult.Queued
-        if (!succeeded) InAppLogger.warn("Downloads/Batch", "Enqueue returned ${result.name} for S${target.season}E${target.episode}")
-        return succeeded
-    }
-
-    private sealed interface StreamCandidateResolution {
-        data class Success(val stream: StreamItem) : StreamCandidateResolution
-        data object MissingApiKey : StreamCandidateResolution
-        data class Failed(val reason: String) : StreamCandidateResolution
-    }
-
-    /** Turns a planned source into a direct, downloadable link, resolving debrid links if needed. */
-    private suspend fun resolveDownloadableStream(
-        candidate: StreamItem,
-        target: BatchEpisodeTarget,
-    ): StreamCandidateResolution {
-        if (candidate.isDownloadableDirectLink()) return StreamCandidateResolution.Success(candidate)
-        if (!candidate.isResolverDependent()) return StreamCandidateResolution.Failed("Could not resolve downloadable stream")
-
-        if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(candidate)) {
-            return when (val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(candidate, target.season, target.episode)) {
-                is DirectDebridPlayableResult.MissingApiKey -> StreamCandidateResolution.MissingApiKey
-                is DirectDebridPlayableResult.Success -> if (resolved.stream.isDownloadableDirectLink()) {
-                    StreamCandidateResolution.Success(resolved.stream)
-                } else {
-                    StreamCandidateResolution.Failed("Resolved link not downloadable")
-                }
-                is DirectDebridPlayableResult.Error -> StreamCandidateResolution.Failed("Failed to resolve stream link")
-                is DirectDebridPlayableResult.NotCached -> StreamCandidateResolution.Failed("Stream is no longer cached")
-                is DirectDebridPlayableResult.Stale -> StreamCandidateResolution.Failed("Stream link is stale")
-            }
-        }
-
-        val debridSettings = DebridSettingsRepository.snapshot()
-        val providerId = DebridProviders.byId(candidate.clientResolve?.service)?.id
-            ?: debridSettings.activeResolverProviderId
-        val hasMissingKey = debridSettings.apiKeyFor(providerId).isBlank() ||
-            !debridSettings.hasResolverProvider ||
-            !debridSettings.canResolvePlayableLinks
-        return if (hasMissingKey) {
-            StreamCandidateResolution.MissingApiKey
-        } else {
-            StreamCandidateResolution.Failed("Stream resolver not available")
-        }
-    }
-
-    private fun StreamItem.isDownloadableDirectLink(): Boolean =
-        playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }?.isSupportedDownloadUrl() == true
 
     fun closePlan() {
         planJob?.cancel()
@@ -559,7 +449,6 @@ object BatchDownloadCoordinator {
 
     fun clearLocalState() {
         closePlan()
-        queueJob.cancel()
-        queueJob = SupervisorJob()
+        BatchDownloadQueuer.clearLocalState()
     }
 }

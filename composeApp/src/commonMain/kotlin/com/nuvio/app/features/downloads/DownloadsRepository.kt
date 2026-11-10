@@ -123,27 +123,8 @@ object DownloadsRepository {
         videoId: String? = null,
     ): DownloadItem? {
         ensureLoaded()
-        val items = _uiState.value.items
-        val normalizedParentMetaId = parentMetaId.trim()
-        val normalizedVideoId = videoId?.trim().orEmpty()
-
-        val matching = items.filter { item ->
-            (normalizedVideoId.isNotBlank() && item.videoId == normalizedVideoId) ||
-                (seasonNumber != null && episodeNumber != null &&
-                    item.parentMetaId == normalizedParentMetaId &&
-                    item.seasonNumber == seasonNumber &&
-                    item.episodeNumber == episodeNumber) ||
-                (seasonNumber == null && episodeNumber == null &&
-                    item.parentMetaId == normalizedParentMetaId &&
-                    item.seasonNumber == null &&
-                    item.episodeNumber == null)
-        }
-
-        return matching.firstOrNull { it.status == DownloadStatus.Downloading }
-            ?: matching.firstOrNull { it.status == DownloadStatus.Queued }
-            ?: matching.firstOrNull { it.status == DownloadStatus.Completed && it.hasPlayableLocalFile() }
-            ?: matching.firstOrNull { it.status == DownloadStatus.Completed }
-            ?: matching.firstOrNull()
+        return EpisodeDownloadIndex.build(_uiState.value.items, parentMetaId)
+            .find(seasonNumber, episodeNumber, videoId)
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -374,22 +355,7 @@ object DownloadsRepository {
     }
 
     fun pauseDownload(downloadId: String) {
-        ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (item.status != DownloadStatus.Downloading && item.status != DownloadStatus.Queued) return
-
-        val wasDownloading = item.status == DownloadStatus.Downloading
-        activeHandles.remove(downloadId)?.cancel()
-        mutateItem(downloadId) { current ->
-            current.copy(
-                status = DownloadStatus.Paused,
-                updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-                errorMessage = null,
-            )
-        }
-        if (wasDownloading) {
-            advanceDownloadQueue()
-        }
+        pauseDownloads(listOf(downloadId))
     }
 
     fun pauseActiveDownloads() {
@@ -418,11 +384,16 @@ object DownloadsRepository {
      */
     private fun pauseActiveDownloadsMatching(predicate: (DownloadItem) -> Boolean) {
         ensureLoaded()
-        _uiState.value.items
-            .filter { it.isActive && predicate(it) }
-            .sortedBy { it.status != DownloadStatus.Queued }
-            .map { it.id }
-            .forEach(::pauseDownload)
+        val current = _uiState.value.items
+        val targets = current.filter { it.isActive && predicate(it) }
+        if (targets.isEmpty()) return
+        targets.forEach { activeHandles.remove(it.id)?.cancel() }
+        val ids = targets.mapTo(mutableSetOf()) { it.id }
+        publish(current.map { item ->
+            if (item.id in ids) item.copy(status = DownloadStatus.Paused, updatedAtEpochMs = DownloadsClock.nowEpochMs(), errorMessage = null) else item
+        })
+        persist()
+        advanceDownloadQueue()
     }
 
     /** Resumes paused episodes of [seriesId] and retries its failed ones. */
@@ -431,7 +402,8 @@ object DownloadsRepository {
         _uiState.value.items
             .filter { it.parentMetaId == seriesId && it.isResumable }
             .sortedForSeriesDownloads()
-            .forEach { resumeDownload(it.id) }
+            .map { it.id }
+            .let(::resumeDownloads)
     }
 
     /** Resumes every paused download and retries every failed one. */
@@ -440,33 +412,39 @@ object DownloadsRepository {
         _uiState.value.items
             .filter { it.isResumable }
             .map { it.id }
-            .forEach(::resumeDownload)
+            .let(::resumeDownloads)
     }
 
     fun resumeDownload(downloadId: String) {
+        resumeDownloads(listOf(downloadId))
+    }
+
+    /** Resumes paused and retries failed downloads, starting them in [ids] order as limits allow. */
+    fun resumeDownloads(ids: Collection<String>) {
         ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        if (!item.isResumable) return
+        val current = _uiState.value.items
+        val itemsById = current.associateBy { it.id }
+        val toResume = ids.distinct().mapNotNull { itemsById[it] }.filter { it.isResumable }
+        if (toResume.isEmpty()) return
 
-        val canStart = DownloadQueuePolicy.current().canStart(
-            showKey = item.showKey,
-            downloading = _uiState.value.items.filter { it.status == DownloadStatus.Downloading && it.id != downloadId },
-        )
-
-        val newStatus = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued
-
-        val reset = item.copy(
-            status = newStatus,
-            errorMessage = null,
-            localFileUri = null,
-            updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-        )
-
-        replaceItem(reset)
-        persist()
-        if (newStatus == DownloadStatus.Downloading) {
-            startDownload(reset)
+        val policy = DownloadQueuePolicy.current()
+        val running = current.filter { it.status == DownloadStatus.Downloading }.toMutableList()
+        val now = DownloadsClock.nowEpochMs()
+        val resetById = toResume.associate { item ->
+            val canStart = policy.canStart(item.showKey, running)
+            val reset = item.copy(
+                status = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued,
+                errorMessage = null,
+                localFileUri = null,
+                updatedAtEpochMs = now,
+            )
+            if (canStart) running += reset
+            item.id to reset
         }
+
+        publish(current.map { resetById[it.id] ?: it })
+        persist()
+        resetById.values.filter { it.status == DownloadStatus.Downloading }.forEach(::startDownload)
         advanceDownloadQueue()
     }
 
@@ -697,14 +675,14 @@ object DownloadsRepository {
             item
         }
     }
-
-    private fun DownloadItem.hasPlayableLocalFile(): Boolean =
-        status == DownloadStatus.Completed &&
-            DownloadsPlatformDownloader.resolveLocalFileUri(
-                localFileUri = localFileUri,
-                destinationFileName = fileName,
-            ) != null
 }
+
+internal fun DownloadItem.hasPlayableLocalFile(): Boolean =
+    status == DownloadStatus.Completed &&
+        DownloadsPlatformDownloader.resolveLocalFileUri(
+            localFileUri = localFileUri,
+            destinationFileName = fileName,
+        ) != null
 
 @Serializable
 private data class StoredDownloadsPayload(

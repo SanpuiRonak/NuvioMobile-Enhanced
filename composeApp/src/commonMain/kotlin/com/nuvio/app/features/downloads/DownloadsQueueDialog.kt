@@ -275,7 +275,7 @@ private fun SelectionActionsBar(
                     ActionPill(
                         icon = Icons.Rounded.PlayArrow,
                         label = stringResource(Res.string.downloads_action_resume_count, toResume.size),
-                        onClick = { toResume.forEach { DownloadsRepository.resumeDownload(it.id) } },
+                        onClick = { DownloadsRepository.resumeDownloads(toResume.map { it.id }) },
                     )
                 }
                 ActionPill(

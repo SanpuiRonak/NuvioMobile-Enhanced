@@ -110,6 +110,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.glass.ambientLiquidGlass
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
 import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.EpisodeDownloadIndex
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.DownloadProgressSpinner
@@ -437,6 +438,7 @@ internal fun DetailSeriesListEpisode(
     progressByVideoId: Map<String, WatchProgressEntry>,
     watchedKeys: Set<String>,
     episodeRatings: Map<Pair<Int, Int>, Double>,
+    episodeDownloadFor: (MetaVideo) -> DownloadItem?,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     onEpisodeClick: ((MetaVideo) -> Unit)?,
@@ -454,7 +456,7 @@ internal fun DetailSeriesListEpisode(
             fallbackVideoId = episode.id,
         )
         val userRatingTarget = remember(meta, episode) { meta.episodeUserRatingTarget(episode) }
-        val downloadItem = rememberEpisodeDownloadLookup(meta.id)(episode)
+        val downloadItem = episodeDownloadFor(episode)
         EpisodeListCard(
             video = episode,
             userRating = rememberUserRating(userRatingTarget),
@@ -1319,16 +1321,10 @@ internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> Downl
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
     }.collectAsStateWithLifecycle()
-    return remember(downloadsUiState.items, metaId) {
-        { video ->
-            DownloadsRepository.findEpisodeDownload(
-                parentMetaId = metaId,
-                seasonNumber = video.season,
-                episodeNumber = video.episode,
-                videoId = video.id,
-            )
-        }
+    val index = remember(downloadsUiState.items, metaId) {
+        EpisodeDownloadIndex.build(downloadsUiState.items, metaId)
     }
+    return remember(index) { { video -> index.find(video.season, video.episode, video.id) } }
 }
 
 @Composable
