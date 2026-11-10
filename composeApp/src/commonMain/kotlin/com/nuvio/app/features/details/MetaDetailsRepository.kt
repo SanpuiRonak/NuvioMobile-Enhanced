@@ -620,9 +620,7 @@ object MetaDetailsRepository {
         val cachedEntry = CachedMetaEntry(baseMeta = meta)
         cachedMetaByRequestKey[requestKey] = cachedEntry
 
-        if (DownloadsRepository.hasDownloadsFor(meta.id) || DownloadsRepository.getShowMetadata(meta.id) != null) {
-            DownloadsRepository.updateShowMetadataFromMetaDetails(meta)
-        }
+        DownloadsRepository.refreshShowMetadataIfDownloaded(meta)
 
         if (!shouldEnrichForMetaScreen(meta, fallbackItemId, mdbListSettings)) {
             _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())
@@ -644,9 +642,7 @@ object MetaDetailsRepository {
                 settingsFingerprint = metaScreenSettingsFingerprint,
             )
         }
-        if (DownloadsRepository.hasDownloadsFor(enrichedMeta.id) || DownloadsRepository.getShowMetadata(enrichedMeta.id) != null) {
-            DownloadsRepository.updateShowMetadataFromMetaDetails(enrichedMeta)
-        }
+        DownloadsRepository.refreshShowMetadataIfDownloaded(enrichedMeta)
         cachedMetaByRequestKey[requestKey] = cachedEntry.copy(
             metaScreenMeta = enrichedMeta,
             metaScreenSettingsFingerprint = metaScreenSettingsFingerprint,
@@ -862,8 +858,13 @@ object MetaDetailsRepository {
     }
 
    
-    fun findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {
-        val meta = _uiState.value.meta ?: return emptyList()
+    fun findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> =
+        _uiState.value.meta?.findEmbeddedStreams(videoId).orEmpty()
+}
+
+/** Streams the addon embedded in this title's metadata for [videoId], if any. */
+internal fun MetaDetails.findEmbeddedStreams(videoId: String): List<com.nuvio.app.features.streams.StreamItem> {
+    val meta = this
         val videosWithStreams = meta.videos.filter { it.streams.isNotEmpty() }
         if (videosWithStreams.isEmpty()) return emptyList()
 
@@ -893,7 +894,6 @@ object MetaDetailsRepository {
 
         return emptyList()
     }
-}
 
 internal sealed interface MetaLookupOutcome {
     class Loaded(val meta: MetaDetails) : MetaLookupOutcome

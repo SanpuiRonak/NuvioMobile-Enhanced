@@ -3,22 +3,16 @@ package com.nuvio.app.features.streams
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.logging.InAppLogger
 import com.nuvio.app.core.build.AppFeaturePolicy
-import com.nuvio.app.features.addons.AddonRepository
-import com.nuvio.app.features.addons.buildAddonResourceUrl
-import com.nuvio.app.features.addons.enabledAddons
-import com.nuvio.app.features.addons.fetchAddonResponseText
 import com.nuvio.app.features.debrid.DirectDebridStreamPreparer
 import com.nuvio.app.features.debrid.DebridSettingsRepository
-import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.DownloadSubtitles
+import com.nuvio.app.features.downloads.displayTitle
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
-import com.nuvio.app.features.plugins.pluginContentId
 import com.nuvio.app.features.plugins.PluginsUiState
-import com.nuvio.app.features.servers.ServerStreams
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,7 +24,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import nuvio.composeapp.generated.resources.*
-import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.launch
 
 object StreamsRepository {
@@ -177,79 +170,58 @@ object StreamsRepository {
             return
         }
 
-        val isNativeServerRequest = ServerStreams.isNativeRequest(videoId)
-        val serverSources = ServerStreams.sources(type, videoId, season, episode, forceRefresh)
-        val preferredGroupIds = serverSources.filter { it.preferred }.mapTo(mutableSetOf()) { it.addonId }
-        val installedAddons = if (isNativeServerRequest) emptyList() else AddonRepository.uiState.value.addons.enabledAddons()
-        val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled && !isNativeServerRequest) {
-            PluginRepository.getEnabledScrapersForType(type)
-        } else {
-            emptyList()
-        }
-        val pluginProviderGroups = pluginScrapers.toPluginProviderGroups(
-            repositories = pluginUiState.repositories,
-            groupByRepository = pluginUiState.groupStreamsByRepository,
+        val targets = StreamSourceLoader.resolveTargets(
+            type = type,
+            videoId = videoId,
+            season = season,
+            episode = episode,
+            forceRefresh = forceRefresh,
+            pluginUiState = pluginUiState,
         )
+        val serverSources = targets.serverSources
+        val preferredGroupIds = targets.preferredGroupIds
+        val pluginProviderGroups = targets.pluginProviderGroups
+        val streamAddons = targets.streamAddons
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty() && serverSources.isEmpty()) {
-            if (downloadedGroup != null) {
-                _uiState.value = StreamsUiState(
+        fun showOnlyDownloadedOrEmpty(reason: StreamsEmptyStateReason, logMessage: String) {
+            _uiState.value = if (downloadedGroup != null) {
+                StreamsUiState(
                     requestToken = requestToken,
                     groups = listOf(downloadedGroup),
                     activeAddonIds = setOf(DOWNLOADED_ADDON_ID),
                     isAnyLoading = false,
-                    emptyStateReason = null,
                     autoPlayDecided = true,
                 )
-                return
+            } else {
+                InAppLogger.warn("Streams/StreamsRepository", logMessage)
+                StreamsUiState(
+                    requestToken = requestToken,
+                    isAnyLoading = false,
+                    emptyStateReason = reason,
+                    autoPlayDecided = true,
+                )
             }
-            InAppLogger.warn("Streams/StreamsRepository", "No stream addons or plugin scrapers installed for type=$type id=$videoId")
-            _uiState.value = StreamsUiState(
-                requestToken = requestToken,
-                isAnyLoading = false,
-                emptyStateReason = StreamsEmptyStateReason.NoAddonsInstalled,
-                autoPlayDecided = true,
+        }
+
+        if (targets.enabledAddonCount == 0 && pluginProviderGroups.isEmpty() && serverSources.isEmpty()) {
+            showOnlyDownloadedOrEmpty(
+                StreamsEmptyStateReason.NoAddonsInstalled,
+                "No stream addons or plugin scrapers installed for type=$type id=$videoId",
             )
             return
         }
 
-        val streamAddons = installedAddons
-            .mapNotNull { addon ->
-                val manifest = addon.manifest ?: return@mapNotNull null
-                if (!manifest.supportsStream(type, videoId)) return@mapNotNull null
-
-                InstalledStreamAddonTarget(
-                    addonName = addon.displayTitle.ifBlank { manifest.name },
-                    addonId = addon.streamAddonInstanceId(manifest.id),
-                    manifest = manifest,
-                )
-            }
-
         log.d { "Found ${streamAddons.size} addons for stream type=$type id=$videoId" }
         InAppLogger.info(
             "Streams/StreamsRepository",
-            "Found addons=${streamAddons.size} pluginGroups=${pluginProviderGroups.size} pluginScrapers=${pluginScrapers.size} " +
+            "Found addons=${streamAddons.size} pluginGroups=${pluginProviderGroups.size} pluginScrapers=${targets.pluginScraperCount} " +
                 "for type=$type id=$videoId",
         )
 
         if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && serverSources.isEmpty()) {
-            if (downloadedGroup != null) {
-                _uiState.value = StreamsUiState(
-                    requestToken = requestToken,
-                    groups = listOf(downloadedGroup),
-                    activeAddonIds = setOf(DOWNLOADED_ADDON_ID),
-                    isAnyLoading = false,
-                    emptyStateReason = null,
-                    autoPlayDecided = true,
-                )
-                return
-            }
-            InAppLogger.warn("Streams/StreamsRepository", "No compatible stream addon/plugin for type=$type id=$videoId")
-            _uiState.value = StreamsUiState(
-                requestToken = requestToken,
-                isAnyLoading = false,
-                emptyStateReason = StreamsEmptyStateReason.NoCompatibleAddons,
-                autoPlayDecided = true,
+            showOnlyDownloadedOrEmpty(
+                StreamsEmptyStateReason.NoCompatibleAddons,
+                "No compatible stream addon/plugin for type=$type id=$videoId",
             )
             return
         }
@@ -707,7 +679,7 @@ object StreamsRepository {
         ) ?: return null
         val localUri = DownloadsRepository.playableLocalFileUri(downloadedItem) ?: return null
 
-        val streamTitle = downloadedItem.streamTitle.ifBlank { "Downloaded" }
+        val streamTitle = downloadedItem.streamTitle.ifBlank { downloadedItem.displayTitle() }
         val streamSubtitle = downloadedItem.streamSubtitle
             ?: downloadedItem.providerName.takeIf { it.isNotBlank() }
         val streamItem = StreamItem(
@@ -715,7 +687,8 @@ object StreamsRepository {
             title = downloadedItem.episodeTitle ?: downloadedItem.title,
             description = streamSubtitle,
             url = localUri,
-            addonName = "Downloaded",
+            // Shown localized via displayAddonName(); this value is never displayed.
+            addonName = DOWNLOADED_ADDON_ID,
             addonId = DOWNLOADED_ADDON_ID,
             streamType = type,
             behaviorHints = StreamBehaviorHints(
@@ -724,7 +697,7 @@ object StreamsRepository {
             externalSubtitles = DownloadSubtitles.localSubtitles(localUri),
         )
         return AddonStreamGroup(
-            addonName = "Downloaded",
+            addonName = DOWNLOADED_ADDON_ID,
             addonId = DOWNLOADED_ADDON_ID,
             streams = listOf(streamItem),
             isLoading = false,

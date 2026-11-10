@@ -185,15 +185,11 @@ fun ActiveAndQueuedDownloadsDialog(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
-                    val subtitle = when {
-                        displayedItems.isEmpty() -> "No downloads in this view"
-                        downloadingCount > 0 && queuedCount > 0 -> "$downloadingCount downloading • $queuedCount queued"
-                        downloadingCount > 0 -> "$downloadingCount downloading"
-                        queuedCount > 0 -> "$queuedCount queued"
-                        pausedCount > 0 && failedCount > 0 -> "$pausedCount paused • $failedCount failed"
-                        pausedCount > 0 -> "$pausedCount paused"
-                        failedCount > 0 -> "$failedCount failed"
-                        else -> "${displayedItems.size} completed"
+                    val subtitle = if (displayedItems.isEmpty()) {
+                        stringResource(Res.string.downloads_view_empty)
+                    } else {
+                        downloadActivitySummary(downloadingCount, queuedCount, pausedCount, failedCount)
+                            ?: stringResource(Res.string.downloads_summary_completed, displayedItems.size)
                     }
                     Text(
                         text = subtitle,
@@ -217,12 +213,12 @@ fun ActiveAndQueuedDownloadsDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChipPill(
-                    label = "Active & Queued",
+                    label = stringResource(Res.string.downloads_section_active_queued),
                     selected = filterMode == DownloadsDialogFilter.ACTIVE_QUEUED,
                     onClick = { filterMode = DownloadsDialogFilter.ACTIVE_QUEUED },
                 )
                 FilterChipPill(
-                    label = "All Downloads",
+                    label = stringResource(Res.string.downloads_filter_all),
                     selected = filterMode == DownloadsDialogFilter.ALL,
                     onClick = { filterMode = DownloadsDialogFilter.ALL },
                 )
@@ -243,7 +239,7 @@ fun ActiveAndQueuedDownloadsDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "${validSelectedIds.size} selected",
+                            text = stringResource(Res.string.downloads_selected_count, validSelectedIds.size),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -256,7 +252,7 @@ fun ActiveAndQueuedDownloadsDialog(
                             if (selectedToPause.isNotEmpty()) {
                                 ActionPillButton(
                                     icon = Icons.Rounded.Pause,
-                                    label = "Pause (${selectedToPause.size})",
+                                    label = stringResource(Res.string.downloads_action_pause_count, selectedToPause.size),
                                     onClick = {
                                         DownloadsRepository.pauseDownloads(selectedToPause.map { it.id })
                                     },
@@ -265,7 +261,7 @@ fun ActiveAndQueuedDownloadsDialog(
                             if (selectedToResume.isNotEmpty()) {
                                 ActionPillButton(
                                     icon = Icons.Rounded.PlayArrow,
-                                    label = "Resume (${selectedToResume.size})",
+                                    label = stringResource(Res.string.downloads_action_resume_count, selectedToResume.size),
                                     onClick = {
                                         DownloadsRepository.resumeDownloads(selectedToResume.map { it.id })
                                     },
@@ -274,7 +270,7 @@ fun ActiveAndQueuedDownloadsDialog(
                             if (selectedToRetry.isNotEmpty()) {
                                 ActionPillButton(
                                     icon = Icons.Rounded.Refresh,
-                                    label = "Retry (${selectedToRetry.size})",
+                                    label = stringResource(Res.string.downloads_action_retry_count, selectedToRetry.size),
                                     onClick = {
                                         DownloadsRepository.retryDownloads(selectedToRetry.map { it.id })
                                     },
@@ -282,7 +278,7 @@ fun ActiveAndQueuedDownloadsDialog(
                             }
                             ActionPillButton(
                                 icon = Icons.Rounded.Delete,
-                                label = "Delete",
+                                label = stringResource(Res.string.action_delete),
                                 isDestructive = true,
                                 onClick = {
                                     pendingDeleteIds = validSelectedIds.toList()
@@ -290,7 +286,7 @@ fun ActiveAndQueuedDownloadsDialog(
                             )
                             ActionPillButton(
                                 icon = Icons.Rounded.Close,
-                                label = "Deselect",
+                                label = stringResource(Res.string.downloads_action_deselect),
                                 onClick = { selectedItemIds = emptySet() },
                             )
                         }
@@ -304,7 +300,7 @@ fun ActiveAndQueuedDownloadsDialog(
                 ) {
                     ActionPillButton(
                         icon = Icons.Rounded.Check,
-                        label = "Select All",
+                        label = stringResource(Res.string.downloads_select_all),
                         modifier = Modifier.weight(1f),
                         onClick = { selectedItemIds = availableIds },
                     )
@@ -327,7 +323,7 @@ fun ActiveAndQueuedDownloadsDialog(
                     if (hasGlobalFailed) {
                         ActionPillButton(
                             icon = Icons.Rounded.Refresh,
-                            label = "Retry Failed",
+                            label = stringResource(Res.string.downloads_action_retry_failed),
                             modifier = Modifier.weight(1f),
                             onClick = { DownloadsRepository.retryAllFailedDownloads() },
                         )
@@ -347,15 +343,16 @@ fun ActiveAndQueuedDownloadsDialog(
                 ) {
                     Text(
                         text = if (filterMode == DownloadsDialogFilter.ACTIVE_QUEUED) {
-                            "No active or queued downloads"
+                            stringResource(Res.string.downloads_empty_active)
                         } else {
-                            "No downloads yet"
+                            stringResource(Res.string.downloads_empty_title)
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             } else {
+                val showFallbackTitle = stringResource(Res.string.downloads_show_fallback_title)
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -364,7 +361,7 @@ fun ActiveAndQueuedDownloadsDialog(
                 ) {
                     // Series Section
                     seriesGroups.forEach { (showId, seasonsMap) ->
-                        val showTitle = seasonsMap.values.firstOrNull()?.firstOrNull()?.title ?: "Show"
+                        val showTitle = seasonsMap.values.firstOrNull()?.firstOrNull()?.title ?: showFallbackTitle
                         val allShowEpisodes = seasonsMap.values.flatten()
                         val allShowIds = allShowEpisodes.map { it.id }.toSet()
                         val isShowFullySelected = allShowIds.isNotEmpty() && allShowIds.all { it in validSelectedIds }
@@ -412,7 +409,7 @@ fun ActiveAndQueuedDownloadsDialog(
                                     }
 
                                     Text(
-                                        text = "${allShowEpisodes.size} eps",
+                                        text = episodeCountText(allShowEpisodes.size),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -428,9 +425,12 @@ fun ActiveAndQueuedDownloadsDialog(
                             val isFolderFullySelected = seasonEpisodeIds.isNotEmpty() && seasonEpisodeIds.all { it in validSelectedIds }
                             val isFolderPartiallySelected = !isFolderFullySelected && seasonEpisodeIds.any { it in validSelectedIds }
 
-                            val seasonLabel = if (seasonNum > 0) "Season $seasonNum" else "Specials"
-
                             item(key = "season_folder_${showId}_$seasonNum") {
+                                val seasonLabel = if (seasonNum > 0) {
+                                    stringResource(Res.string.episodes_season, seasonNum)
+                                } else {
+                                    stringResource(Res.string.episodes_specials)
+                                }
                                 Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -484,13 +484,9 @@ fun ActiveAndQueuedDownloadsDialog(
                                                 val sQueuedCount = seasonEpisodes.count { it.status == DownloadStatus.Queued }
                                                 val sPausedCount = seasonEpisodes.count { it.status == DownloadStatus.Paused }
                                                 val sFailedCount = seasonEpisodes.count { it.status == DownloadStatus.Failed }
-                                                val folderStatus = when {
-                                                    sActiveCount > 0 -> "$sActiveCount downloading • ${seasonEpisodes.size} episodes"
-                                                    sQueuedCount > 0 -> "$sQueuedCount queued • ${seasonEpisodes.size} episodes"
-                                                    sFailedCount > 0 -> "$sFailedCount failed • ${seasonEpisodes.size} episodes"
-                                                    sPausedCount > 0 -> "$sPausedCount paused • ${seasonEpisodes.size} episodes"
-                                                    else -> "${seasonEpisodes.size} completed"
-                                                }
+                                                val folderStatus = downloadActivitySummary(sActiveCount, sQueuedCount, sPausedCount, sFailedCount)
+                                                    ?.let { "$it • ${episodeCountText(seasonEpisodes.size)}" }
+                                                    ?: stringResource(Res.string.downloads_summary_completed, seasonEpisodes.size)
                                                 Text(
                                                     text = folderStatus,
                                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
@@ -502,7 +498,7 @@ fun ActiveAndQueuedDownloadsDialog(
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Icon(
                                                 imageVector = if (isCollapsed) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowUp,
-                                                contentDescription = if (isCollapsed) "Expand" else "Collapse",
+                                                contentDescription = stringResource(if (isCollapsed) Res.string.action_expand else Res.string.action_collapse),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(20.dp),
                                             )
@@ -593,7 +589,7 @@ fun ActiveAndQueuedDownloadsDialog(
         NuvioStatusModal(
             title = stringResource(Res.string.action_delete_confirm_title),
             message = if (toDelete.size > 1) {
-                "Delete ${toDelete.size} selected downloads?"
+                stringResource(Res.string.downloads_delete_selected_confirm, toDelete.size)
             } else {
                 stringResource(Res.string.action_delete_confirm_message)
             },
@@ -854,17 +850,7 @@ private fun ActiveDownloadQueueRow(
                                 tint = MaterialTheme.colorScheme.primary,
                             )
                         }
-                        val statusText = when (item.status) {
-                            DownloadStatus.Downloading -> {
-                                val size = formatBytes(item.downloadedBytes)
-                                val total = item.totalBytes?.takeIf { it > 0L }?.let(::formatBytes)
-                                if (total != null) "$animatedPercentage% • $size / $total" else if (item.progressFraction > 0f) "$animatedPercentage% • $size" else "Downloading • $size"
-                            }
-                            DownloadStatus.Queued -> "Queued"
-                            DownloadStatus.Paused -> if (item.progressFraction > 0f) "Paused • $animatedPercentage%" else "Paused"
-                            DownloadStatus.Failed -> item.errorMessage?.takeIf { it.isNotBlank() } ?: "Failed"
-                            DownloadStatus.Completed -> "Completed • ${formatBytes(item.totalBytes ?: item.downloadedBytes)}"
-                        }
+                        val statusText = downloadStatusText(item)
                         Text(
                             text = statusText,
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),

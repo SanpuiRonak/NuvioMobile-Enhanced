@@ -159,7 +159,7 @@ internal data class AppTabActions(
     val onDownloadsClick: () -> Unit = {},
     val onOpenDownloadsSettings: (() -> Unit)? = null,
     val onOpenDownload: ((DownloadItem) -> Unit)? = null,
-    val onNavigateToShowDownloads: ((showId: String, title: String) -> Unit)? = null,
+    val onOpenShowDetails: ((showId: String, title: String) -> Unit)? = null,
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     val onLiveTvChannelClick: (LiveTvChannel) -> Unit = {},
@@ -248,7 +248,7 @@ internal fun AppTabHost(
                     onDownloadsClick = actions.onDownloadsClick,
                     onOpenDownloadsSettings = actions.onOpenDownloadsSettings,
                     onOpenDownload = actions.onOpenDownload,
-                    onNavigateToShowDownloads = actions.onNavigateToShowDownloads,
+                    onOpenShowDetails = actions.onOpenShowDetails,
                     disintegrationRequest = state.libraryDisintegrationRequest,
                 )
             }

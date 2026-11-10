@@ -88,7 +88,7 @@ internal fun ProviderFilterRow(
     val chip: @Composable (AddonStreamGroup?, Boolean, () -> Unit) -> Unit =
         filterChip ?: { group, isSelected, onClick ->
             FilterChip(
-                label = group?.addonName ?: stringResource(Res.string.collections_tab_all),
+                label = group?.displayName() ?: stringResource(Res.string.collections_tab_all),
                 isSelected = isSelected,
                 isPinned = group != null && group.soleSourcePin()?.key in pinnedSourceIds,
                 onClick = onClick,

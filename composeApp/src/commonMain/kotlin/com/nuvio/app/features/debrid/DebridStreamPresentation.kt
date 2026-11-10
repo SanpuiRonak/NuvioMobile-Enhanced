@@ -178,7 +178,6 @@ internal object DebridStreamMetadata {
         resolutionRegex("hd") to DebridStreamResolution.P720,
         resolutionRegex("sd") to DebridStreamResolution.P480,
     )
-    private val resolutionTokens = explicitResolutionTokens + genericQualityTokens
 
     // Words release names use for each language besides its code. Short words that are common in
     // titles ("por", "chi", "fra") are left out so a title is not read as a language.
@@ -317,7 +316,7 @@ internal object DebridStreamMetadata {
         )
     }
 
-    internal fun streamResolution(
+    private fun streamResolution(
         parsedResolution: String?,
         parsedQuality: String?,
         searchText: String,
@@ -338,11 +337,6 @@ internal object DebridStreamMetadata {
             ?: DebridStreamResolution.UNKNOWN
     }
 
-    internal fun streamResolution(vararg values: String?): DebridStreamResolution =
-        values.firstNotNullOfOrNull { explicitResolutionValue(it) }
-            ?: values.firstNotNullOfOrNull { genericQualityResolutionValue(it) }
-            ?: DebridStreamResolution.UNKNOWN
-
     private fun explicitResolutionValue(value: String?): DebridStreamResolution? {
         val normalized = value?.lowercase().orEmpty()
         return explicitResolutionTokens.firstOrNull { (regex, _) -> regex.containsMatchIn(normalized) }?.second
@@ -352,9 +346,6 @@ internal object DebridStreamMetadata {
         val normalized = value?.lowercase().orEmpty()
         return genericQualityTokens.firstOrNull { (regex, _) -> regex.containsMatchIn(normalized) }?.second
     }
-
-    private fun resolutionValue(value: String?): DebridStreamResolution? =
-        explicitResolutionValue(value) ?: genericQualityResolutionValue(value)
 
     private fun streamQuality(parsedQuality: String?, searchText: String): DebridStreamQuality {
         val text = listOfNotNull(parsedQuality, searchText).joinToString(" ").lowercase()

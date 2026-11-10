@@ -133,17 +133,6 @@ fun StreamsScreen(
     episodeTitle: String? = null,
     episodeThumbnail: String? = null,
     episodeOverview: String? = null,
-    episodeReleased: String? = null,
-    episodeRuntime: Int? = null,
-    episodeImdbRating: Double? = null,
-    episodeTmdbRating: Double? = null,
-    episodeRating: Double? = null,
-    seasonPoster: String? = null,
-    showDescription: String? = null,
-    showGenres: List<String> = emptyList(),
-    showReleaseInfo: String? = null,
-    showImdbRating: String? = null,
-    showStatus: String? = null,
     resumePositionMs: Long? = null,
     resumeProgressFraction: Float? = null,
     manualSelection: Boolean = false,
@@ -286,17 +275,6 @@ fun StreamsScreen(
                                 episodeThumbnail = episodeThumbnail,
                                 stream = resolved.stream,
                                 episodeOverview = episodeOverview,
-                                episodeReleased = episodeReleased,
-                                episodeRuntime = episodeRuntime,
-                                episodeImdbRating = episodeImdbRating,
-                                episodeTmdbRating = episodeTmdbRating,
-                                episodeRating = episodeRating,
-                                seasonPoster = seasonPoster,
-                                showDescription = showDescription,
-                                showGenres = showGenres,
-                                showReleaseInfo = showReleaseInfo,
-                                showImdbRating = showImdbRating,
-                                showStatus = showStatus,
                             )
                             NuvioToastController.show(result.toastMessage())
                         }
@@ -324,17 +302,6 @@ fun StreamsScreen(
                     episodeThumbnail = episodeThumbnail,
                     stream = stream,
                     episodeOverview = episodeOverview,
-                    episodeReleased = episodeReleased,
-                    episodeRuntime = episodeRuntime,
-                    episodeImdbRating = episodeImdbRating,
-                    episodeTmdbRating = episodeTmdbRating,
-                    episodeRating = episodeRating,
-                    seasonPoster = seasonPoster,
-                    showDescription = showDescription,
-                    showGenres = showGenres,
-                    showReleaseInfo = showReleaseInfo,
-                    showImdbRating = showImdbRating,
-                    showStatus = showStatus,
                 )
                 NuvioToastController.show(result.toastMessage())
             }
@@ -1155,7 +1122,7 @@ private fun StreamSectionHeader(
                 )
             }
             Text(
-                text = group.addonName,
+                text = group.displayName(),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
@@ -1590,3 +1557,12 @@ internal fun StreamSearchEmptyBlock(modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** The source name to show; the downloaded copy is labelled here because it's built outside composition. */
+@Composable
+internal fun AddonStreamGroup.displayName(): String =
+    if (addonId == DOWNLOADED_ADDON_ID) stringResource(Res.string.provider_downloaded) else addonName
+
+@Composable
+internal fun StreamItem.displayAddonName(): String =
+    if (addonId == DOWNLOADED_ADDON_ID) stringResource(Res.string.provider_downloaded) else addonName

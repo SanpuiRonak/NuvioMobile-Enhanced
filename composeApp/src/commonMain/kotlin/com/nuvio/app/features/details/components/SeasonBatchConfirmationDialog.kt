@@ -41,7 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nuvio.app.core.i18n.localizedByteUnit
 import com.nuvio.app.core.ui.DialogButton
 import com.nuvio.app.core.ui.DialogButtonStyle
 import com.nuvio.app.core.ui.DialogButtons
@@ -50,13 +49,14 @@ import com.nuvio.app.features.debrid.DebridStreamMetadata
 import com.nuvio.app.features.debrid.DebridStreamPreferences
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.downloads.BatchModalStep
-import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.EpisodePlanStatus
 import com.nuvio.app.features.downloads.PlannedEpisodeItem
 import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
 import com.nuvio.app.features.downloads.SeasonBatchPlan
 import com.nuvio.app.features.downloads.batchEpisodeKey
+import com.nuvio.app.features.downloads.formatBytes
+import com.nuvio.app.features.downloads.qualityBadge
 import com.nuvio.app.features.downloads.isBatchEpisodeDownloaded
 import com.nuvio.app.features.streams.StreamItem
 import nuvio.composeapp.generated.resources.*
@@ -67,7 +67,7 @@ fun SeasonBatchConfirmationDialog(
     plan: SeasonBatchPlan,
     isEpisodeWatched: (MetaVideo) -> Boolean = { false },
     onDismissRequest: () -> Unit,
-    onConfirm: (SeasonBatchPlan) -> Unit,
+    onConfirm: () -> Unit,
 ) {
     var overrideTargetItem by remember { mutableStateOf<PlannedEpisodeItem?>(null) }
 
@@ -84,7 +84,7 @@ fun SeasonBatchConfirmationDialog(
                 plan = plan,
                 seasonIndex = step.seasonIndex,
                 onDismissRequest = onDismissRequest,
-                onConfirm = { onConfirm(plan) },
+                onConfirm = onConfirm,
                 onOverrideClicked = { overrideTargetItem = it },
             )
         }
@@ -101,7 +101,7 @@ fun SeasonBatchConfirmationDialog(
             onSelect = { stream ->
                 SeasonBatchDownloadCoordinator.overrideEpisodeStream(
                     season = currentSeason,
-                    episodeNumber = overrideItem.episode.episode,
+                    episode = overrideItem.episode,
                     stream = stream,
                 )
                 overrideTargetItem = null
@@ -238,7 +238,7 @@ private fun EpisodeSelectionDialog(
                     val key = batchEpisodeKey(plan.currentPickerSeason, epNum)
                     val isChecked = key in plan.selectedEpisodeKeys
                     val downloaded = isDownloaded(ep, plan.currentPickerSeason)
-                    val watched = isEpisodeWatched(ep) || "${plan.meta.id}:${plan.currentPickerSeason}:$epNum" in plan.watchedEpisodeKeys || ep.id in plan.watchedEpisodeKeys
+                    val watched = plan.isEpisodeWatched(ep, plan.currentPickerSeason, isEpisodeWatched)
 
                     Surface(
                         modifier = Modifier
@@ -265,7 +265,7 @@ private fun EpisodeSelectionDialog(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                val epTitle = ep.title?.takeIf { it.isNotBlank() } ?: "Episode $epNum"
+                                val epTitle = ep.title?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.downloads_episode_fallback_title, epNum)
                                 Text(
                                     text = "E$epNum • $epTitle",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -275,7 +275,7 @@ private fun EpisodeSelectionDialog(
                                 )
                                 val tags = mutableListOf<String>()
                                 if (downloaded) tags.add(stringResource(Res.string.season_download_already_downloaded))
-                                if (watched) tags.add("Watched")
+                                if (watched) tags.add(stringResource(Res.string.episodes_cd_watched))
                                 if (tags.isNotEmpty()) {
                                     Text(
                                         text = tags.joinToString(" • "),
@@ -291,9 +291,7 @@ private fun EpisodeSelectionDialog(
 
             // Summary text
             val selectedCount = plan.totalSelectedCount
-            val seasonsCount = plan.allSeasons.count { s ->
-                plan.episodesBySeason[s].orEmpty().any { batchEpisodeKey(s, it.episode ?: 0) in plan.selectedEpisodeKeys }
-            }
+            val seasonsCount = plan.allSeasons.count(plan::isSeasonSelected)
             val summaryText = if (seasonsCount > 1) {
                 stringResource(Res.string.downloads_episodes_selected_multi_season, selectedCount, seasonsCount)
             } else {
@@ -519,7 +517,7 @@ private fun EpisodeSourcePlanRow(
                         val size = item.sizeBytes?.takeIf { it > 0 }?.let { formatBytes(it) }
                         val details = listOfNotNull(badge, addon, size).joinToString(" • ")
                         Text(
-                            text = details.ifBlank { item.streamCandidate.name ?: "Stream selected" },
+                            text = details.ifBlank { item.streamCandidate.name ?: stringResource(Res.string.downloads_stream_selected) },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
@@ -595,13 +593,11 @@ private fun StreamOverrideDialog(
                     val isCurrentSelection = stream.name == target.streamCandidate?.name &&
                         stream.addonName == target.streamCandidate?.addonName
 
-                    val res = facts.resolution.label.takeUnless { it == "Unknown" }
-                    val quality = facts.quality.name.replace("_", "-").takeUnless { it == "UNKNOWN" }
-                    val badge = listOfNotNull(res, quality).firstOrNull() ?: facts.resolution.label
+                    val badge = facts.qualityBadge()
                     val size = facts.size?.takeIf { it > 0 }?.let { formatBytes(it) }
                     val addon = stream.addonName
 
-                    val titleText = stream.streamLabel.ifBlank { stream.name ?: "Stream" }
+                    val titleText = stream.streamLabel.ifBlank { stream.name ?: stringResource(Res.string.downloads_stream_fallback_title) }
                     val subtitleText = listOfNotNull(badge, addon, size).joinToString(" • ")
 
                     Surface(
@@ -662,19 +658,5 @@ private fun StreamOverrideDialog(
                 style = DialogButtonStyle.Secondary,
             )
         }
-    }
-}
-
-private fun formatBytes(bytes: Long): String {
-    if (bytes <= 0L) return ""
-    val kib = 1024.0
-    val mib = kib * 1024.0
-    val gib = mib * 1024.0
-    val value = bytes.toDouble()
-    return when {
-        value >= gib -> "${((value / gib) * 10.0).toInt() / 10.0} ${localizedByteUnit("GB")}"
-        value >= mib -> "${((value / mib) * 10.0).toInt() / 10.0} ${localizedByteUnit("MB")}"
-        value >= kib -> "${((value / kib) * 10.0).toInt() / 10.0} ${localizedByteUnit("KB")}"
-        else -> "$bytes ${localizedByteUnit("B")}"
     }
 }

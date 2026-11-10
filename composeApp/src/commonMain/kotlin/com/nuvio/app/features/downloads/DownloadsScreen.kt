@@ -51,6 +51,7 @@ import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.settings.DownloadsSettingsScreen
 import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.pluralStringResource
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -284,14 +285,10 @@ private fun LazyListScope.downloadsRootContent(
                 val isQueued = queuedCount > 0
                 val seriesStats = remember(allShowEpisodes) { calculateSeriesDownloadStats(allShowEpisodes) }
 
-                val activeStatusText = when {
-                    downloadingCount > 0 && queuedCount > 0 -> stringResource(Res.string.downloads_active_series_subtitle, downloadingCount, queuedCount)
-                    downloadingCount > 0 -> stringResource(Res.string.downloads_active_series_downloading_only, downloadingCount)
-                    queuedCount > 0 -> stringResource(Res.string.downloads_active_series_queued_only, queuedCount)
-                    else -> stringResource(Res.string.downloads_episode_count, episodes.size)
-                }
+                val activeStatusText = downloadActivitySummary(downloading = downloadingCount, queued = queuedCount)
+                    ?: stringResource(Res.string.downloads_episode_count, episodes.size)
                 val seriesSubtitle = if (seriesStats.totalBytes > 0L) {
-                    "$activeStatusText • Total: ${formatBytes(seriesStats.totalBytes)} • Avg: ${formatBytes(seriesStats.avgBytes)} • Median: ${formatBytes(seriesStats.medianBytes)}"
+                    "$activeStatusText • ${seriesStats.sizeStatsText()}"
                 } else {
                     activeStatusText
                 }
@@ -313,7 +310,9 @@ private fun LazyListScope.downloadsRootContent(
                         ) {
                             Icon(
                                 imageVector = if (isDownloading || isQueued) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isDownloading || isQueued) "Pause Series" else "Resume Series",
+                                contentDescription = stringResource(
+                                    if (isDownloading || isQueued) Res.string.downloads_action_pause_series else Res.string.downloads_action_resume_series,
+                                ),
                                 tint = if (isDownloading || isQueued) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -363,9 +362,9 @@ private fun LazyListScope.downloadsRootContent(
             val seriesStats = remember(episodes) { calculateSeriesDownloadStats(episodes) }
             val episodeCountText = stringResource(Res.string.downloads_episode_count, episodes.size)
             val seriesSubtitle = if (episodes.size > 1) {
-                "$episodeCountText • Total: ${formatBytes(seriesStats.totalBytes)} • Avg: ${formatBytes(seriesStats.avgBytes)} • Median: ${formatBytes(seriesStats.medianBytes)}"
+                "$episodeCountText • ${seriesStats.sizeStatsText()}"
             } else {
-                "$episodeCountText • Total: ${formatBytes(seriesStats.totalBytes)}"
+                "$episodeCountText • ${stringResource(Res.string.downloads_series_size_total, formatBytes(seriesStats.totalBytes))}"
             }
 
             ShowDownloadRow(
@@ -493,7 +492,6 @@ private fun MovieDownloadRow(
         animationSpec = tween(durationMillis = 400),
         label = "movieDownloadProgress",
     )
-    val animatedPercentage = (animatedProgress * 100).toInt().coerceIn(0, 100)
 
     Surface(
         modifier = Modifier
@@ -539,7 +537,7 @@ private fun MovieDownloadRow(
                             )
                         }
                         Text(
-                            text = statusText(item, animatedPercentage),
+                            text = downloadStatusText(item),
                             style = MaterialTheme.typography.bodySmall,
                             color = if (isQueued) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -702,7 +700,6 @@ private fun EpisodeDownloadRow(
         animationSpec = tween(durationMillis = 400),
         label = "episodeDownloadProgress",
     )
-    val animatedPercentage = (animatedProgress * 100).toInt().coerceIn(0, 100)
 
     Surface(
         modifier = Modifier
@@ -756,7 +753,7 @@ private fun EpisodeDownloadRow(
                             )
                         }
                         Text(
-                            text = statusText(item, animatedPercentage),
+                            text = downloadStatusText(item),
                             style = MaterialTheme.typography.labelSmall,
                             color = if (isQueued) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -884,7 +881,7 @@ private fun SectionTitle(title: String) {
 }
 
 @Composable
-private fun statusText(item: DownloadItem, animatedPercentage: Int = (item.progressFraction * 100).toInt()): String {
+internal fun downloadStatusText(item: DownloadItem): String {
     val size = if (item.totalBytes != null && item.totalBytes > 0L) {
         "${formatBytes(item.downloadedBytes)} / ${formatBytes(item.totalBytes)}"
     } else {
@@ -902,3 +899,33 @@ private fun statusText(item: DownloadItem, animatedPercentage: Int = (item.progr
         DownloadStatus.Failed -> item.errorMessage ?: stringResource(Res.string.downloads_status_failed)
     }
 }
+
+/** "2 downloading • 1 queued"-style summary of the non-zero counts, or null when all are zero. */
+@Composable
+internal fun downloadActivitySummary(
+    downloading: Int = 0,
+    queued: Int = 0,
+    paused: Int = 0,
+    failed: Int = 0,
+): String? = listOf(
+    downloading to Res.string.downloads_summary_downloading,
+    queued to Res.string.downloads_summary_queued,
+    paused to Res.string.downloads_summary_paused,
+    failed to Res.string.downloads_summary_failed,
+).filter { (count, _) -> count > 0 }
+    .map { (count, label) -> stringResource(label, count) }
+    .joinToString(" • ")
+    .ifEmpty { null }
+
+@Composable
+internal fun episodeCountText(count: Int): String =
+    pluralStringResource(Res.plurals.downloads_episodes_count, count, count)
+
+@Composable
+private fun SeriesDownloadStats.sizeStatsText(): String =
+    stringResource(
+        Res.string.downloads_series_size_stats,
+        formatBytes(totalBytes),
+        formatBytes(avgBytes),
+        formatBytes(medianBytes),
+    )

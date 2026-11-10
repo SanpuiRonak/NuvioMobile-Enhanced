@@ -1242,29 +1242,6 @@ internal fun MainAppContent(
                 )
             }
 
-        val onDownloadContent: ContentPlayAction =
-            { type, videoId, parentMetaId, parentMetaType, title, logo, poster, background, seasonNumber, episodeNumber, episodeTitle, episodeThumbnail, pauseDescription, resumePositionMs ->
-                launchPlaybackWithDownloadPreference(
-                    type = type,
-                    videoId = videoId,
-                    parentMetaId = parentMetaId,
-                    parentMetaType = parentMetaType,
-                    title = title,
-                    logo = logo,
-                    poster = poster,
-                    background = background,
-                    seasonNumber = seasonNumber,
-                    episodeNumber = episodeNumber,
-                    episodeTitle = episodeTitle,
-                    episodeThumbnail = episodeThumbnail,
-                    pauseDescription = pauseDescription,
-                    resumePositionMs = resumePositionMs,
-                    resumeProgressFraction = null,
-                    manualSelection = true,
-                    startFromBeginning = false,
-                    downloadMode = true,
-                )
-            }
 
         val onPlayExternally: ContentPlayAction =
             { type, videoId, parentMetaId, parentMetaType, title, logo, poster, background, seasonNumber, episodeNumber, episodeTitle, episodeThumbnail, pauseDescription, resumePositionMs ->
@@ -1726,7 +1703,7 @@ internal fun MainAppContent(
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
                                 onOpenDownloadsSettings = { navController.navigate(DownloadsSettingsRoute(downloadsTitle)) },
                                 onOpenDownload = ::openDownloadedItem,
-                                onNavigateToShowDownloads = { showId, title ->
+                                onOpenShowDetails = { showId, title ->
                                     navController.navigate(DetailRoute(type = "series", id = showId, title = title))
                                 },
                                 onContinueWatchingClick = onContinueWatchingClick,
@@ -1822,7 +1799,6 @@ internal fun MainAppContent(
                             navController = navController,
                             onPlay = onPlay,
                             onPlayManually = onPlayManually,
-                            onDownload = onDownloadContent,
                             onPlayExternally = onPlayExternally,
                             onPlayFromStart = onPlayFromStart,
                             sharedTransitionScope = this@SharedTransitionLayout,

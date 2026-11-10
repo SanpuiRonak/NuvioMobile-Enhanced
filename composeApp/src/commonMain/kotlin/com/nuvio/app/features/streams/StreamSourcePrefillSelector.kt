@@ -28,49 +28,17 @@ internal object StreamSourcePrefillSelector {
     private const val MIN_VALID_FILE_SIZE_BYTES = 10_000_000L
     private const val MAX_VALID_FILE_SIZE_BYTES = 250_000_000_000L
 
-    fun select(
-        streams: List<StreamItem>,
-        preferredResolution: DownloadPreferredResolution = DownloadPreferredResolution.DEFAULT,
-        includeUnresolvedResolverStreams: Boolean = false,
-    ): StreamSelectionResult? = select(
-        streams = streams,
-        preferredResolution = preferredResolution.resolution,
-        includeUnresolvedResolverStreams = includeUnresolvedResolverStreams,
-    )
-
+    /** Picks the source to download; debrid links count as eligible because they are resolved at queue time. */
     fun selectForBatch(
         streams: List<StreamItem>,
         preferredResolution: DownloadPreferredResolution = DownloadPreferredResolution.DEFAULT,
-    ): StreamSelectionResult? = select(
-        streams = streams,
-        preferredResolution = preferredResolution.resolution,
-        includeUnresolvedResolverStreams = true,
-    )
-
-    fun selectForBatch(
-        streams: List<StreamItem>,
-        preferredResolution: Int,
-    ): StreamSelectionResult? = select(
-        streams = streams,
-        preferredResolution = preferredResolution,
-        includeUnresolvedResolverStreams = true,
-    )
-
-    fun select(
-        streams: List<StreamItem>,
-        preferredResolution: Int,
-        includeUnresolvedResolverStreams: Boolean = false,
     ): StreamSelectionResult? {
         val eligible = streams.filter { stream ->
-            if (includeUnresolvedResolverStreams) {
-                val direct = stream.playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }
-                if (direct != null) {
-                    direct.isSupportedDownloadUrl()
-                } else {
-                    stream.isResolverDependent() || stream.isDownloadCapable()
-                }
+            val direct = stream.playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }
+            if (direct != null) {
+                direct.isSupportedDownloadUrl()
             } else {
-                stream.isDownloadCapable()
+                stream.isResolverDependent() || DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)
             }
         }
         if (eligible.isEmpty()) return null
@@ -87,7 +55,7 @@ internal object StreamSourcePrefillSelector {
         }
 
         // 1. Normal case: smallest known size at-or-above preferred resolution
-        val atOrAbove = candidates.filter { it.resolutionValue >= preferredResolution && it.resolutionValue > 0 }
+        val atOrAbove = candidates.filter { it.resolutionValue >= preferredResolution.resolution && it.resolutionValue > 0 }
         if (atOrAbove.isNotEmpty()) {
             val selected = atOrAbove.minWithOrNull(
                 compareBy<IndexedCandidate> { it.size == null }
@@ -102,7 +70,7 @@ internal object StreamSourcePrefillSelector {
         }
 
         // 2. Fallback: highest known lower resolution then smallest size
-        val lowerResolutions = candidates.filter { it.resolutionValue in 1 until preferredResolution }
+        val lowerResolutions = candidates.filter { it.resolutionValue in 1 until preferredResolution.resolution }
         if (lowerResolutions.isNotEmpty()) {
             val selected = lowerResolutions.minWithOrNull(
                 compareByDescending<IndexedCandidate> { it.resolutionValue }
@@ -147,10 +115,3 @@ internal object StreamSourcePrefillSelector {
 
 fun StreamItem.isResolverDependent(): Boolean =
     isDirectDebridStream || needsLocalDebridResolve
-
-/** Checks whether the stream can be downloaded. */
-fun StreamItem.isDownloadCapable(): Boolean {
-    if (DirectDebridPlaybackResolver.shouldResolveToPlayableStream(this)) return true
-    val direct = playableDirectUrl?.trim()?.takeIf { it.isNotBlank() } ?: return false
-    return direct.isSupportedDownloadUrl()
-}

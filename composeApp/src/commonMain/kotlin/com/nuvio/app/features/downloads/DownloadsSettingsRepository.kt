@@ -25,6 +25,7 @@ object DownloadsSettingsRepository {
     const val DEFAULT_MAX_DOWNLOAD_CONCURRENCY = 3
     const val DEFAULT_MAX_SERIES_EPISODE_CONCURRENCY = 1
     const val DEFAULT_MAX_CONCURRENT_SHOWS = 1
+    const val MAX_CONCURRENCY_LIMIT = 5
 
     private val _maxDownloadConcurrency = MutableStateFlow(DEFAULT_MAX_DOWNLOAD_CONCURRENCY)
     val maxDownloadConcurrency: StateFlow<Int> = _maxDownloadConcurrency.asStateFlow()
@@ -72,7 +73,7 @@ object DownloadsSettingsRepository {
 
     fun setMaxDownloadConcurrency(count: Int) {
         ensureLoaded()
-        val clamped = count.coerceIn(1, 10)
+        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
         if (_maxDownloadConcurrency.value == clamped) return
         _maxDownloadConcurrency.value = clamped
         DownloadsSettingsStorage.saveMaxDownloadConcurrency(clamped)
@@ -81,7 +82,7 @@ object DownloadsSettingsRepository {
 
     fun setMaxSeriesEpisodeConcurrency(count: Int) {
         ensureLoaded()
-        val clamped = count.coerceIn(1, 10)
+        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
         if (_maxSeriesEpisodeConcurrency.value == clamped) return
         _maxSeriesEpisodeConcurrency.value = clamped
         DownloadsSettingsStorage.saveMaxSeriesEpisodeConcurrency(clamped)
@@ -90,7 +91,7 @@ object DownloadsSettingsRepository {
 
     fun setMaxConcurrentShows(count: Int) {
         ensureLoaded()
-        val clamped = count.coerceIn(1, 10)
+        val clamped = count.coerceIn(1, MAX_CONCURRENCY_LIMIT)
         if (_maxConcurrentShows.value == clamped) return
         _maxConcurrentShows.value = clamped
         DownloadsSettingsStorage.saveMaxConcurrentShows(clamped)

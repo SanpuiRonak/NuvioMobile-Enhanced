@@ -1,5 +1,7 @@
 package com.nuvio.app.features.downloads
 
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -66,7 +68,7 @@ fun DeviceStorageBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Device Storage",
+                    text = stringResource(Res.string.downloads_storage_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -127,18 +129,18 @@ fun DeviceStorageBar(
             ) {
                 StorageLegendItem(
                     color = downloadsColor,
-                    label = "Nuvio Downloads",
+                    label = stringResource(Res.string.downloads_storage_app),
                     value = formatBytes(appDownloadsBytes),
                 )
                 if (totalBytes > 0L) {
                     StorageLegendItem(
                         color = otherAppsColor,
-                        label = "Other Apps & System",
+                        label = stringResource(Res.string.downloads_storage_other),
                         value = formatBytes(otherUsedBytes),
                     )
                     StorageLegendItem(
                         color = freeSpaceColor,
-                        label = "Free Space",
+                        label = stringResource(Res.string.downloads_storage_free),
                         value = formatBytes(freeBytes),
                     )
                 }

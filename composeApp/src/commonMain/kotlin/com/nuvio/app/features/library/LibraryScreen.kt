@@ -215,7 +215,7 @@ fun LibraryScreen(
     onDownloadsClick: (() -> Unit)? = null,
     onOpenDownloadsSettings: (() -> Unit)? = null,
     onOpenDownload: ((DownloadItem) -> Unit)? = null,
-    onNavigateToShowDownloads: ((showId: String, title: String) -> Unit)? = null,
+    onOpenShowDetails: ((showId: String, title: String) -> Unit)? = null,
 ) {
     val uiState by remember {
         LibraryRepository.ensureLoaded()
@@ -657,7 +657,7 @@ fun LibraryScreen(
             val effectivePosterClick: ((LibraryItem) -> Unit)? = if (sourceMode == LibraryViewMode.Downloaded) {
                 { item ->
                     if (item.type == "series" || item.type == "tv") {
-                        onNavigateToShowDownloads?.invoke(item.id, item.name) ?: onPosterClick?.invoke(item)
+                        onOpenShowDetails?.invoke(item.id, item.name) ?: onPosterClick?.invoke(item)
                     } else {
                         onPosterClick?.invoke(item)
                     }

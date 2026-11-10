@@ -17,9 +17,16 @@ import nuvio.composeapp.generated.resources.downloads_allow_mobile_data_descript
 import nuvio.composeapp.generated.resources.downloads_allow_mobile_data_title
 import nuvio.composeapp.generated.resources.downloads_max_concurrent_shows_title
 import nuvio.composeapp.generated.resources.downloads_preferred_resolution_title
-import nuvio.composeapp.generated.resources.downloads_shows_count_multiple
-import nuvio.composeapp.generated.resources.downloads_shows_count_single
+import nuvio.composeapp.generated.resources.downloads_show_download_button_description
+import nuvio.composeapp.generated.resources.downloads_show_download_button_title
 import nuvio.composeapp.generated.resources.settings_downloads_location_title
+import nuvio.composeapp.generated.resources.downloads_max_concurrent_title
+import nuvio.composeapp.generated.resources.downloads_max_series_episode_concurrent_title
+import org.jetbrains.compose.resources.PluralStringResource
+import org.jetbrains.compose.resources.pluralStringResource
+import nuvio.composeapp.generated.resources.downloads_count
+import nuvio.composeapp.generated.resources.downloads_episodes_count
+import nuvio.composeapp.generated.resources.downloads_shows_count
 import org.jetbrains.compose.resources.stringResource
 
 internal fun LazyListScope.downloadsSettingsContent(
@@ -28,11 +35,13 @@ internal fun LazyListScope.downloadsSettingsContent(
     item {
         val downloadLocationUri by DownloadsSettingsRepository.downloadLocationUri.collectAsStateWithLifecycle()
         val allowMobileData by DownloadsSettingsRepository.allowMobileDataDownloads.collectAsStateWithLifecycle()
+        val showDownloadButton by DownloadsSettingsRepository.showDownloadButton.collectAsStateWithLifecycle()
         val preferredResolution by DownloadsSettingsRepository.preferredResolution.collectAsStateWithLifecycle()
+        val maxDownloads by DownloadsSettingsRepository.maxDownloadConcurrency.collectAsStateWithLifecycle()
+        val maxEpisodesPerShow by DownloadsSettingsRepository.maxSeriesEpisodeConcurrency.collectAsStateWithLifecycle()
         val maxConcurrentShows by DownloadsSettingsRepository.maxConcurrentShows.collectAsStateWithLifecycle()
         var showPicker by remember { mutableStateOf(false) }
         var showResolutionDialog by remember { mutableStateOf(false) }
-        var showMaxShowsDialog by remember { mutableStateOf(false) }
 
         SettingsSection(
             title = stringResource(Res.string.compose_settings_root_downloads_title),
@@ -46,15 +55,28 @@ internal fun LazyListScope.downloadsSettingsContent(
                     onClick = { showResolutionDialog = true },
                 )
                 SettingsGroupDivider(isTablet = isTablet)
-                SettingsNavigationRow(
-                    title = stringResource(Res.string.downloads_max_concurrent_shows_title),
-                    description = if (maxConcurrentShows == 1) {
-                        stringResource(Res.string.downloads_shows_count_single, maxConcurrentShows)
-                    } else {
-                        stringResource(Res.string.downloads_shows_count_multiple, maxConcurrentShows)
-                    },
+                ConcurrencyLimitRow(
+                    title = stringResource(Res.string.downloads_max_concurrent_title),
+                    value = maxDownloads,
+                    countLabel = Res.plurals.downloads_count,
                     isTablet = isTablet,
-                    onClick = { showMaxShowsDialog = true },
+                    onSelect = DownloadsSettingsRepository::setMaxDownloadConcurrency,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                ConcurrencyLimitRow(
+                    title = stringResource(Res.string.downloads_max_concurrent_shows_title),
+                    value = maxConcurrentShows,
+                    countLabel = Res.plurals.downloads_shows_count,
+                    isTablet = isTablet,
+                    onSelect = DownloadsSettingsRepository::setMaxConcurrentShows,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                ConcurrencyLimitRow(
+                    title = stringResource(Res.string.downloads_max_series_episode_concurrent_title),
+                    value = maxEpisodesPerShow,
+                    countLabel = Res.plurals.downloads_episodes_count,
+                    isTablet = isTablet,
+                    onSelect = DownloadsSettingsRepository::setMaxSeriesEpisodeConcurrency,
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
@@ -63,6 +85,14 @@ internal fun LazyListScope.downloadsSettingsContent(
                     checked = allowMobileData,
                     isTablet = isTablet,
                     onCheckedChange = DownloadsSettingsRepository::setAllowMobileDataDownloads,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.downloads_show_download_button_title),
+                    description = stringResource(Res.string.downloads_show_download_button_description),
+                    checked = showDownloadButton,
+                    isTablet = isTablet,
+                    onCheckedChange = DownloadsSettingsRepository::setShowDownloadButton,
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
@@ -96,26 +126,6 @@ internal fun LazyListScope.downloadsSettingsContent(
             )
         }
 
-        if (showMaxShowsDialog) {
-            SettingsChoiceDialog(
-                title = stringResource(Res.string.downloads_max_concurrent_shows_title),
-                options = listOf(1, 2, 3, 4, 5),
-                selected = maxConcurrentShows,
-                label = { count ->
-                    if (count == 1) {
-                        stringResource(Res.string.downloads_shows_count_single, count)
-                    } else {
-                        stringResource(Res.string.downloads_shows_count_multiple, count)
-                    }
-                },
-                onSelect = {
-                    DownloadsSettingsRepository.setMaxConcurrentShows(it)
-                    showMaxShowsDialog = false
-                },
-                onDismiss = { showMaxShowsDialog = false },
-            )
-        }
-
         if (showPicker) {
             DownloadLocationPicker(
                 onLocationSelected = { uri ->
@@ -135,3 +145,39 @@ internal expect fun DownloadLocationPicker(
 )
 
 internal expect fun formatUriForDisplay(uri: String): String
+
+/** A settings row for a download concurrency limit, with its own picker dialog. */
+@Composable
+private fun ConcurrencyLimitRow(
+    title: String,
+    value: Int,
+    countLabel: PluralStringResource,
+    isTablet: Boolean,
+    onSelect: (Int) -> Unit,
+) {
+    var showDialog by remember { mutableStateOf(false) }
+    val formatCount: @Composable (Int) -> String = { count ->
+        pluralStringResource(countLabel, count, count)
+    }
+
+    SettingsNavigationRow(
+        title = title,
+        description = formatCount(value),
+        isTablet = isTablet,
+        onClick = { showDialog = true },
+    )
+
+    if (showDialog) {
+        SettingsChoiceDialog(
+            title = title,
+            options = (1..DownloadsSettingsRepository.MAX_CONCURRENCY_LIMIT).toList(),
+            selected = value,
+            label = formatCount,
+            onSelect = {
+                onSelect(it)
+                showDialog = false
+            },
+            onDismiss = { showDialog = false },
+        )
+    }
+}

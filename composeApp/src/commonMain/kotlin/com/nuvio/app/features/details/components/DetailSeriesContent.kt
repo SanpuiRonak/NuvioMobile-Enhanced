@@ -908,7 +908,6 @@ private fun EpisodeHorizontalRow(
     preferredEpisodeNumber: Int? = null,
     listState: LazyListState = rememberLazyListState(),
     highlightedKey: String? = null,
-    isEpisodeDownloaded: ((MetaVideo) -> Boolean)? = null,
     getEpisodeDownloadItem: ((MetaVideo) -> DownloadItem?)? = null,
     onEpisodeClick: ((MetaVideo) -> Unit)?,
     onEpisodeLongPress: ((MetaVideo) -> Unit)?,
@@ -973,7 +972,6 @@ private fun EpisodeHorizontalRow(
                         episode = episode,
                     ),
                 downloadItem = getEpisodeDownloadItem?.invoke(episode),
-                isDownloaded = isEpisodeDownloaded?.invoke(episode) == true,
                 episodeRatingsVisibility = episodeRatingsVisibility,
                 blurUnwatchedEpisodes = blurUnwatchedEpisodes,
                 metrics = rowMetrics,
@@ -996,7 +994,6 @@ private fun EpisodeHorizontalCard(
     imdbRating: Double?,
     isWatched: Boolean,
     downloadItem: DownloadItem? = null,
-    isDownloaded: Boolean = false,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     metrics: EpisodeHorizontalCardMetrics,
@@ -1114,8 +1111,6 @@ private fun EpisodeHorizontalCard(
                 )
                 if (downloadItem != null) {
                     EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
-                } else if (isDownloaded) {
-                    EpisodeDownloadedBadge(compact = true)
                 }
             }
 
@@ -1357,20 +1352,25 @@ internal fun EpisodeDownloadBadge(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
-    if (downloadItem == null) return
+    if (downloadItem == null || downloadItem.status == DownloadStatus.Failed) return
 
-    val isCompleted = downloadItem.status == DownloadStatus.Completed
-    val isDownloading = downloadItem.status == DownloadStatus.Downloading
-    val isQueued = downloadItem.status == DownloadStatus.Queued
-    val isPaused = downloadItem.status == DownloadStatus.Paused
-
-    if (!isCompleted && !isDownloading && !isQueued && !isPaused) return
-
+    val hasKnownSize = downloadItem.totalBytes != null && downloadItem.totalBytes > 0L
     val animatedProgress by animateFloatAsState(
         targetValue = downloadItem.progressFraction.coerceIn(0f, 1f),
         animationSpec = tween(durationMillis = 350),
         label = "episodeDownloadBadgeProgress",
     )
+    val contentColor = MaterialTheme.colorScheme.onPrimary
+    val label = when (downloadItem.status) {
+        DownloadStatus.Completed -> stringResource(Res.string.provider_downloaded)
+        DownloadStatus.Paused -> stringResource(Res.string.downloads_badge_paused)
+        DownloadStatus.Queued -> if (hasKnownSize) {
+            formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes)
+        } else {
+            stringResource(Res.string.downloads_status_queued)
+        }
+        else -> formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes)
+    }
 
     Row(
         modifier = modifier
@@ -1380,121 +1380,48 @@ internal fun EpisodeDownloadBadge(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (isCompleted) {
-            Icon(
+        when (downloadItem.status) {
+            DownloadStatus.Completed -> Icon(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
+                tint = contentColor,
                 modifier = Modifier.size(11.dp),
             )
-            Text(
-                text = stringResource(Res.string.provider_downloaded).uppercase(),
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = if (compact) 9.sp else 10.sp,
-                    letterSpacing = 0.2.sp,
-                ),
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            DownloadStatus.Paused -> Icon(
+                imageVector = Icons.Rounded.Pause,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(10.dp),
             )
-        } else if (isDownloading) {
-            if (downloadItem.totalBytes != null && downloadItem.totalBytes > 0L) {
+            DownloadStatus.Downloading -> if (hasKnownSize) {
                 CircularProgressIndicator(
                     progress = { animatedProgress },
                     modifier = Modifier.size(10.dp),
                     strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f),
+                    color = contentColor,
+                    trackColor = contentColor.copy(alpha = 0.35f),
                 )
             } else {
                 CircularProgressIndicator(
                     modifier = Modifier.size(10.dp),
                     strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = contentColor,
                 )
             }
-            Text(
-                text = formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes),
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = if (compact) 9.sp else 10.sp,
-                    letterSpacing = 0.2.sp,
-                ),
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        } else if (isQueued) {
-            CircularProgressIndicator(
+            else -> CircularProgressIndicator(
                 modifier = Modifier.size(10.dp),
                 strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
-            )
-            Text(
-                text = if (downloadItem.totalBytes != null && downloadItem.totalBytes > 0L) {
-                    formatDownloadBadgeProgress(downloadItem.downloadedBytes, downloadItem.totalBytes)
-                } else {
-                    stringResource(Res.string.downloads_status_queued).uppercase()
-                },
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = if (compact) 9.sp else 10.sp,
-                    letterSpacing = 0.2.sp,
-                ),
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        } else if (isPaused) {
-            Icon(
-                imageVector = Icons.Rounded.Pause,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(10.dp),
-            )
-            Text(
-                text = "PAUSED",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = if (compact) 9.sp else 10.sp,
-                    letterSpacing = 0.2.sp,
-                ),
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                color = contentColor.copy(alpha = 0.8f),
             )
         }
-    }
-}
-
-@Composable
-internal fun EpisodeDownloadedBadge(
-    modifier: Modifier = Modifier,
-    compact: Boolean = false,
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
-            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Check,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.size(11.dp),
-        )
         Text(
-            text = stringResource(Res.string.provider_downloaded).uppercase(),
+            text = label.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = if (compact) 9.sp else 10.sp,
                 letterSpacing = 0.2.sp,
             ),
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onPrimary,
+            color = contentColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1622,7 +1549,6 @@ private fun EpisodeListCard(
     imdbRating: Double?,
     isWatched: Boolean,
     downloadItem: DownloadItem? = null,
-    isDownloaded: Boolean = false,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     sizing: SeriesContentSizing,
@@ -1718,8 +1644,6 @@ private fun EpisodeListCard(
                     )
                     if (downloadItem != null) {
                         EpisodeDownloadBadge(downloadItem = downloadItem, compact = true)
-                    } else if (isDownloaded) {
-                        EpisodeDownloadedBadge(compact = true)
                     }
                 }
 

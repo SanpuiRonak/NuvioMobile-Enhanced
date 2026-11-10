@@ -111,13 +111,10 @@ import com.kyant.backdrop.Backdrop
 import com.nuvio.app.core.ui.glass.LocalLiquidGlassBackdrop
 import com.nuvio.app.core.ui.glass.nuvioBackdropSource
 import com.nuvio.app.core.ui.glass.rememberNuvioBackdrop
-import com.nuvio.app.core.ui.DialogButton
-import com.nuvio.app.core.ui.DialogButtonStyle
-import com.nuvio.app.core.ui.DialogButtons
-import com.nuvio.app.core.ui.DialogSurface
 import com.nuvio.app.features.details.components.SeasonBatchConfirmationDialog
 import com.nuvio.app.features.details.components.isEpisodeWatchedForNavigator
 import com.nuvio.app.features.downloads.DownloadsSettingsRepository
+import com.nuvio.app.features.downloads.BatchQueueResult
 import com.nuvio.app.features.downloads.SeasonBatchDownloadCoordinator
 import com.nuvio.app.features.details.components.DetailActions
 import com.nuvio.app.features.details.components.CommentDetailSheet
@@ -207,7 +204,6 @@ fun MetaDetailsScreen(
     onBack: () -> Unit,
     onPlay: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onPlayManually: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
-    onDownload: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onPlayExternally: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onPlayFromStart: ((type: String, videoId: String, parentMetaId: String, parentMetaType: String, title: String, logo: String?, poster: String?, background: String?, seasonNumber: Int?, episodeNumber: Int?, episodeTitle: String?, episodeThumbnail: String?, pauseDescription: String?, resumePositionMs: Long?) -> Unit)? = null,
     onOpenMeta: ((MetaPreview) -> Unit)? = null,
@@ -960,9 +956,6 @@ fun MetaDetailsScreen(
                             meta = meta,
                             season = targetSeason,
                             watchedKeys = watchedUiState.watchedKeys,
-                            isEpisodeWatched = { ep ->
-                                meta.isEpisodeWatchedForNavigator(ep, progressByVideoId, watchedUiState.watchedKeys)
-                            },
                         )
                     }
                 } else {
@@ -1034,8 +1027,7 @@ fun MetaDetailsScreen(
                     )
                         ?.takeUnless { it.isCompleted }
                     stopHeroTrailerForNavigation()
-                    val playAction = onPlayManually ?: onPlay
-                    playAction?.invoke(
+                    onPlay?.invoke(
                         meta.type,
                         streamVideoId,
                         meta.id,
@@ -1703,17 +1695,13 @@ fun MetaDetailsScreen(
                                 onDismissRequest = {
                                     SeasonBatchDownloadCoordinator.cancelBatchPlan()
                                 },
-                                onConfirm = { confirmedPlan ->
-                                    val started = SeasonBatchDownloadCoordinator.queueConfirmedBatch()
-                                    detailsScope.launch {
-                                        NuvioToastController.show(
-                                            if (started) {
-                                                getString(Res.string.downloads_enqueue_started)
-                                            } else {
-                                                getString(Res.string.downloads_enqueue_requires_wifi)
-                                            },
-                                        )
+                                onConfirm = {
+                                    val message = when (SeasonBatchDownloadCoordinator.queueConfirmedBatch()) {
+                                        BatchQueueResult.Queued -> Res.string.downloads_enqueue_started
+                                        BatchQueueResult.RequiresWifi -> Res.string.downloads_enqueue_requires_wifi
+                                        BatchQueueResult.NothingToQueue -> Res.string.season_download_no_source_found
                                     }
+                                    detailsScope.launch { NuvioToastController.show(getString(message)) }
                                 },
                             )
                         }

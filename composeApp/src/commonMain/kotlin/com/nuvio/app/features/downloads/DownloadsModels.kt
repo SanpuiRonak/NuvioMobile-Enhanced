@@ -37,9 +37,6 @@ enum class DownloadPreferredResolution(
     companion object {
         val DEFAULT = P1080
 
-        fun fromResolution(value: Int): DownloadPreferredResolution =
-            entries.firstOrNull { it.resolution == value } ?: DEFAULT
-
         fun fromStorage(value: String?): DownloadPreferredResolution {
             if (value.isNullOrBlank()) return DEFAULT
             val trimmed = value.trim()
@@ -142,9 +139,6 @@ data class DownloadItem(
 ) {
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null
-
-    val isQueued: Boolean
-        get() = status == DownloadStatus.Queued
 
     val isDownloading: Boolean
         get() = status == DownloadStatus.Downloading
@@ -285,8 +279,9 @@ fun StoredDownloadedCastMeta.toMetaPerson(): MetaPerson =
         tmdbId = tmdbId,
     )
 
-fun StoredDownloadedShowMeta.toMetaDetails(): MetaDetails {
-    val downloadedEpisodes = DownloadsRepository.uiState.value.items
+/** Builds offline details from the stored show metadata plus the show's downloaded items. */
+fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
+    val downloadedEpisodes = showDownloads
         .filter { it.parentMetaId == showId && it.isEpisode }
         .sortedForSeriesDownloads()
 
@@ -312,15 +307,7 @@ fun StoredDownloadedShowMeta.toMetaDetails(): MetaDetails {
         downloadedEpisodes.map { it.toMetaVideo() }
     }
 
-    val mergedPosters = mutableMapOf<Int, String>()
-    mergedPosters.putAll(seasonPosters)
-    downloadedEpisodes.forEach { ep ->
-        val s = ep.seasonNumber
-        val p = ep.seasonPoster
-        if (s != null && p != null && !mergedPosters.containsKey(s)) {
-            mergedPosters[s] = p
-        }
-    }
+    val mergedPosters = downloadedEpisodes.seasonPosters() + seasonPosters
 
     return MetaDetails(
         id = showId,
@@ -340,13 +327,7 @@ fun StoredDownloadedShowMeta.toMetaDetails(): MetaDetails {
     )
 }
 
-fun List<DownloadItem>.toOfflineMetaDetails(
-    showId: String,
-    storedShowMeta: StoredDownloadedShowMeta? = null,
-): MetaDetails {
-    if (storedShowMeta != null) {
-        return storedShowMeta.toMetaDetails()
-    }
+fun List<DownloadItem>.toOfflineMetaDetails(showId: String): MetaDetails {
     val showEpisodes = filter { it.parentMetaId == showId }
     val first = showEpisodes.firstOrNull()
     val showTitle = first?.title.orEmpty()
@@ -359,14 +340,7 @@ fun List<DownloadItem>.toOfflineMetaDetails(
     val imdbRating = showEpisodes.firstNotNullOfOrNull { it.showImdbRating }
     val genres = showEpisodes.firstOrNull { it.showGenres.isNotEmpty() }?.showGenres ?: emptyList()
 
-    val seasonPosters = mutableMapOf<Int, String>()
-    showEpisodes.forEach { ep ->
-        val s = ep.seasonNumber
-        val p = ep.seasonPoster
-        if (s != null && p != null && !seasonPosters.containsKey(s)) {
-            seasonPosters[s] = p
-        }
-    }
+    val seasonPosters = showEpisodes.seasonPosters()
 
     val videos = showEpisodes.sortedForSeriesDownloads().map { it.toMetaVideo() }
 
@@ -387,55 +361,44 @@ fun List<DownloadItem>.toOfflineMetaDetails(
     )
 }
 
+/** The first known poster for each season among these downloads. */
+private fun List<DownloadItem>.seasonPosters(): Map<Int, String> =
+    asReversed()
+        .mapNotNull { item -> item.seasonNumber?.let { season -> item.seasonPoster?.let { season to it } } }
+        .toMap()
+
 internal fun formatBytes(bytes: Long): String {
     if (bytes <= 0L) return "0 ${localizedByteUnit("B")}"
-    val kib = 1024.0
-    val mib = kib * 1024.0
-    val gib = mib * 1024.0
-    val value = bytes.toDouble()
-    return when {
-        value >= gib -> "${((value / gib) * 10.0).toInt() / 10.0} ${localizedByteUnit("GB")}"
-        value >= mib -> "${((value / mib) * 10.0).toInt() / 10.0} ${localizedByteUnit("MB")}"
-        value >= kib -> "${((value / kib) * 10.0).toInt() / 10.0} ${localizedByteUnit("KB")}"
-        else -> "$bytes ${localizedByteUnit("B")}"
+    val unit = ByteUnit.forBytes(bytes)
+    return if (unit == ByteUnit.B) {
+        "$bytes ${localizedByteUnit(unit.name)}"
+    } else {
+        "${unit.format(bytes)} ${localizedByteUnit(unit.name)}"
     }
 }
 
+/** "1.2/3.4 GB" when both sizes share a unit, otherwise "512.0 MB/1.2 GB". */
 internal fun formatDownloadBadgeProgress(downloadedBytes: Long, totalBytes: Long?): String {
-    if (totalBytes == null || totalBytes <= 0L) {
-        return formatBytes(downloadedBytes)
-    }
-    val kib = 1024.0
-    val mib = kib * 1024.0
-    val gib = mib * 1024.0
-    val totalVal = totalBytes.toDouble()
-    val dlVal = downloadedBytes.toDouble()
-
-    val totalUnit = when {
-        totalVal >= gib -> "GB"
-        totalVal >= mib -> "MB"
-        totalVal >= kib -> "KB"
-        else -> "B"
-    }
-    val dlUnit = when {
-        dlVal >= gib -> "GB"
-        dlVal >= mib -> "MB"
-        dlVal >= kib -> "KB"
-        else -> "B"
-    }
-
-    return if (totalUnit == dlUnit) {
-        val divisor = when (totalUnit) {
-            "GB" -> gib
-            "MB" -> mib
-            "KB" -> kib
-            else -> 1.0
-        }
-        val dlFormatted = ((dlVal / divisor) * 10.0).toInt() / 10.0
-        val totalFormatted = ((totalVal / divisor) * 10.0).toInt() / 10.0
-        "$dlFormatted/$totalFormatted ${localizedByteUnit(totalUnit)}"
+    if (totalBytes == null || totalBytes <= 0L) return formatBytes(downloadedBytes)
+    val unit = ByteUnit.forBytes(totalBytes)
+    return if (unit == ByteUnit.forBytes(downloadedBytes)) {
+        "${unit.format(downloadedBytes)}/${unit.format(totalBytes)} ${localizedByteUnit(unit.name)}"
     } else {
         "${formatBytes(downloadedBytes)}/${formatBytes(totalBytes)}"
+    }
+}
+
+private enum class ByteUnit(val bytes: Double) {
+    B(1.0),
+    KB(1024.0),
+    MB(1024.0 * 1024.0),
+    GB(1024.0 * 1024.0 * 1024.0);
+
+    /** The value in this unit, truncated to one decimal place. */
+    fun format(value: Long): Double = ((value / bytes) * 10.0).toInt() / 10.0
+
+    companion object {
+        fun forBytes(value: Long): ByteUnit = entries.last { value >= it.bytes || it == B }
     }
 }
 
@@ -443,10 +406,7 @@ data class SeriesDownloadStats(
     val totalBytes: Long,
     val avgBytes: Long,
     val medianBytes: Long,
-) {
-    val formattedStats: String
-        get() = "Total: ${formatBytes(totalBytes)} • Avg: ${formatBytes(avgBytes)} • Med: ${formatBytes(medianBytes)}"
-}
+)
 
 internal fun calculateSeriesDownloadStats(episodes: List<DownloadItem>): SeriesDownloadStats {
     if (episodes.isEmpty()) return SeriesDownloadStats(0L, 0L, 0L)

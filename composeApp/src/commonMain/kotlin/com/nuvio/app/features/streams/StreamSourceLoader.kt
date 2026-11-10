@@ -11,7 +11,6 @@ import com.nuvio.app.features.debrid.DebridSettings
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamPresentation
 import com.nuvio.app.features.debrid.LocalDebridAvailabilityService
-import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.plugins.PluginsUiState
@@ -23,7 +22,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
@@ -38,32 +36,13 @@ internal data class StreamSourceTargets(
     val preferredGroupIds: Set<String>,
     val installedAddonOrder: List<String>,
     val installedAddonIds: Set<String>,
+    /** Enabled addons before filtering by stream support; zero means none are installed. */
+    val enabledAddonCount: Int,
+    val pluginScraperCount: Int,
 )
 
 internal object StreamSourceLoader {
     private val log = Logger.withTag("StreamSourceLoader")
-
-    fun findEmbeddedStreams(meta: MetaDetails?, videoId: String): List<StreamItem> {
-        if (meta == null) return emptyList()
-        val videosWithStreams = meta.videos.filter { it.streams.isNotEmpty() }
-        if (videosWithStreams.isEmpty()) return emptyList()
-
-        val directMatch = videosWithStreams.firstOrNull { it.id == videoId }
-        if (directMatch != null) return directMatch.streams
-
-        val parts = videoId.split(":")
-        if (parts.size >= 3) {
-            val season = parts[parts.size - 2].toIntOrNull()
-            val episode = parts[parts.size - 1].toIntOrNull()
-            if (season != null && episode != null) {
-                val episodeMatch = videosWithStreams.firstOrNull { it.season == season && it.episode == episode }
-                if (episodeMatch != null) return episodeMatch.streams
-            }
-        }
-
-        val prefixMatch = videosWithStreams.firstOrNull { it.id.startsWith("$videoId:") }
-        return prefixMatch?.streams ?: emptyList()
-    }
 
     fun resolveTargets(
         type: String,
@@ -113,6 +92,8 @@ internal object StreamSourceLoader {
             preferredGroupIds = preferredGroupIds,
             installedAddonOrder = installedAddonOrder,
             installedAddonIds = installedAddonIds,
+            enabledAddonCount = installedAddons.size,
+            pluginScraperCount = pluginScrapers.size,
         )
     }
 
@@ -259,6 +240,14 @@ internal object StreamSourceLoader {
         ).firstOrNull() ?: checkingGroup
     }
 
+    private fun failedGroup(addonName: String, addonId: String, error: Throwable) = AddonStreamGroup(
+        addonName = addonName,
+        addonId = addonId,
+        streams = emptyList(),
+        isLoading = false,
+        error = error.message,
+    )
+
     suspend fun loadStreams(
         type: String,
         videoId: String,
@@ -282,20 +271,12 @@ internal object StreamSourceLoader {
             return presented.streams
         }
 
-        val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
-            PluginRepository.initialize()
-            PluginRepository.uiState.value
-        } else {
-            PluginsUiState(pluginsEnabled = false)
-        }
-
         val targets = resolveTargets(
             type = type,
             videoId = videoId,
             season = season,
             episode = episode,
             forceRefresh = forceRefresh,
-            pluginUiState = pluginUiState,
         )
 
         val totalSources = targets.streamAddons.size + targets.pluginProviderGroups.size + targets.serverSources.size
@@ -320,15 +301,7 @@ internal object StreamSourceLoader {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            resultsChannel.send(
-                                index to AddonStreamGroup(
-                                    addonName = addon.addonName,
-                                    addonId = addon.addonId,
-                                    streams = emptyList(),
-                                    isLoading = false,
-                                    error = e.message,
-                                ),
-                            )
+                            resultsChannel.send(index to failedGroup(addon.addonName, addon.addonId, e))
                         }
                     }
                 }
@@ -364,15 +337,7 @@ internal object StreamSourceLoader {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            resultsChannel.send(
-                                index to AddonStreamGroup(
-                                    addonName = providerGroup.addonName,
-                                    addonId = providerGroup.addonId,
-                                    streams = emptyList(),
-                                    isLoading = false,
-                                    error = e.message,
-                                ),
-                            )
+                            resultsChannel.send(index to failedGroup(providerGroup.addonName, providerGroup.addonId, e))
                         }
                     }
                 }
@@ -386,15 +351,7 @@ internal object StreamSourceLoader {
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            resultsChannel.send(
-                                index to AddonStreamGroup(
-                                    addonName = source.addonName,
-                                    addonId = source.addonId,
-                                    streams = emptyList(),
-                                    isLoading = false,
-                                    error = e.message,
-                                ),
-                            )
+                            resultsChannel.send(index to failedGroup(source.addonName, source.addonId, e))
                         }
                     }
                 }

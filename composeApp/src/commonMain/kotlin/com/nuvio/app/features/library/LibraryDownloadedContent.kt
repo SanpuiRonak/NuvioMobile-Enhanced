@@ -60,7 +60,9 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
-import com.nuvio.app.features.downloads.formatBytes
+import com.nuvio.app.features.downloads.downloadActivitySummary
+import com.nuvio.app.features.downloads.episodeCountText
+import com.nuvio.app.features.downloads.formatDownloadBadgeProgress
 import com.nuvio.app.features.downloads.sortedForSeriesDownloads
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.PosterShape
@@ -70,7 +72,6 @@ import org.jetbrains.compose.resources.stringResource
 data class ActiveDownloadShelfItem(
     val id: String,
     val title: String,
-    val subtitle: String,
     val poster: String?,
     val progressFraction: Float,
     val status: DownloadStatus,
@@ -80,6 +81,8 @@ data class ActiveDownloadShelfItem(
     val episodeProgresses: List<Float> = emptyList(),
     val completedEpisodeCount: Int = 0,
     val totalEpisodeCount: Int = 0,
+    val downloadingEpisodeCount: Int = 0,
+    val queuedEpisodeCount: Int = 0,
 )
 
 internal fun buildDownloadedSections(
@@ -265,17 +268,9 @@ internal fun getActiveDownloadShelfItem(
             ((completedCount.toFloat() + inProgressSum) / totalCount.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
-        val subtitle = when {
-            downloadingCount > 0 && queuedCount > 0 -> "$downloadingCount downloading • $queuedCount queued"
-            downloadingCount > 0 -> "$downloadingCount downloading"
-            queuedCount > 0 -> "$queuedCount queued"
-            else -> "$totalCount episodes"
-        }
-
         return ActiveDownloadShelfItem(
             id = "active_show_${item.id}",
             title = item.name,
-            subtitle = subtitle,
             poster = item.poster,
             progressFraction = overallProgress,
             status = showStatus,
@@ -285,28 +280,17 @@ internal fun getActiveDownloadShelfItem(
             episodeProgresses = episodeProgresses,
             completedEpisodeCount = completedCount,
             totalEpisodeCount = totalCount,
+            downloadingEpisodeCount = downloadingCount,
+            queuedEpisodeCount = queuedCount,
         )
     } else {
         val movie = allDownloads.firstOrNull { !it.isEpisode && (it.id == item.id || it.parentMetaId == item.id) }
             ?: return null
         if (movie.status == DownloadStatus.Completed) return null
 
-        val statusText = when (movie.status) {
-            DownloadStatus.Downloading -> {
-                val downloaded = formatBytes(movie.downloadedBytes)
-                val total = movie.totalBytes?.takeIf { it > 0L }?.let(::formatBytes)
-                if (total != null) "$downloaded / $total" else downloaded
-            }
-            DownloadStatus.Queued -> "Queued"
-            DownloadStatus.Paused -> "Paused"
-            DownloadStatus.Failed -> "Failed"
-            else -> ""
-        }
-
         return ActiveDownloadShelfItem(
             id = movie.id,
             title = item.name.ifBlank { movie.title },
-            subtitle = statusText,
             poster = item.poster ?: movie.poster,
             progressFraction = movie.progressFraction,
             status = movie.status,
@@ -602,31 +586,31 @@ internal fun ActiveDownloadPosterCard(
                         val statusBadgeText = when (item.status) {
                             DownloadStatus.Downloading -> {
                                 if (item.isShow && item.totalEpisodeCount > 0) {
-                                    "${item.completedEpisodeCount}/${item.totalEpisodeCount} eps"
+                                    stringResource(Res.string.downloads_progress_episodes, item.completedEpisodeCount, item.totalEpisodeCount)
                                 } else if (item.progressFraction <= 0f) {
-                                    "Connecting..."
+                                    stringResource(Res.string.downloads_connecting)
                                 } else {
                                     "$animatedPercentage%"
                                 }
                             }
                             DownloadStatus.Queued -> {
                                 if (item.isShow && item.totalEpisodeCount > 0) {
-                                    "${item.completedEpisodeCount}/${item.totalEpisodeCount} Queued"
+                                    "${item.completedEpisodeCount}/${item.totalEpisodeCount} ${stringResource(Res.string.downloads_status_queued)}"
                                 } else {
-                                    "Queued"
+                                    stringResource(Res.string.downloads_status_queued)
                                 }
                             }
                             DownloadStatus.Paused -> {
                                 if (item.isShow && item.totalEpisodeCount > 0) {
-                                    "${item.completedEpisodeCount}/${item.totalEpisodeCount} Paused"
+                                    "${item.completedEpisodeCount}/${item.totalEpisodeCount} ${stringResource(Res.string.downloads_badge_paused)}"
                                 } else if (item.progressFraction > 0f) {
                                     "$animatedPercentage%"
                                 } else {
-                                    "Paused"
+                                    stringResource(Res.string.downloads_badge_paused)
                                 }
                             }
-                            DownloadStatus.Failed -> "Failed"
-                            else -> "Active"
+                            DownloadStatus.Failed -> stringResource(Res.string.downloads_status_failed)
+                            else -> stringResource(Res.string.downloads_section_active)
                         }
                         Text(
                             text = statusBadgeText,
@@ -659,7 +643,9 @@ internal fun ActiveDownloadPosterCard(
                                 } else {
                                     Icons.Rounded.PlayArrow
                                 },
-                                contentDescription = if (item.status == DownloadStatus.Downloading) "Pause" else "Resume",
+                                contentDescription = stringResource(
+                                    if (item.status == DownloadStatus.Downloading) Res.string.downloads_action_pause else Res.string.action_resume,
+                                ),
                                 modifier = Modifier.size(14.dp),
                                 tint = Color.White,
                             )
@@ -741,7 +727,7 @@ internal fun ActiveDownloadPosterCard(
                 }
             } else {
                 Text(
-                    text = item.subtitle,
+                    text = item.subtitleText(),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (item.status == DownloadStatus.Queued) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -749,5 +735,21 @@ internal fun ActiveDownloadPosterCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ActiveDownloadShelfItem.subtitleText(): String {
+    if (isShow) {
+        return downloadActivitySummary(downloading = downloadingEpisodeCount, queued = queuedEpisodeCount)
+            ?: episodeCountText(totalEpisodeCount)
+    }
+    val movie = rawItem ?: return ""
+    return when (status) {
+        DownloadStatus.Downloading -> formatDownloadBadgeProgress(movie.downloadedBytes, movie.totalBytes)
+        DownloadStatus.Queued -> stringResource(Res.string.downloads_status_queued)
+        DownloadStatus.Paused -> stringResource(Res.string.downloads_badge_paused)
+        DownloadStatus.Failed -> stringResource(Res.string.downloads_status_failed)
+        DownloadStatus.Completed -> ""
     }
 }
