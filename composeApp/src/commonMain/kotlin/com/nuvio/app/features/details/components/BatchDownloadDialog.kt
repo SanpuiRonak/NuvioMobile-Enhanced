@@ -55,6 +55,8 @@ import com.nuvio.app.features.downloads.PlannedEpisodeItem
 import com.nuvio.app.features.downloads.BatchDownloadCoordinator
 import com.nuvio.app.features.downloads.BatchDownloadPlan
 import com.nuvio.app.features.downloads.batchEpisodeKey
+import com.nuvio.app.features.downloads.batchKey
+import com.nuvio.app.features.downloads.localizedEpisodeLabel
 import com.nuvio.app.features.downloads.formatBytes
 import com.nuvio.app.features.downloads.qualityBadge
 import com.nuvio.app.features.downloads.seasonLabel
@@ -144,7 +146,7 @@ private fun EpisodeSelectionDialog(
                     items(plan.availableSeasons) { seasonNumber ->
                         val seasonLabel = seasonLabel(seasonNumber)
                         val countInSeason = plan.episodesBySeason[seasonNumber].orEmpty().count { episode ->
-                            batchEpisodeKey(seasonNumber, episode.episode ?: 0) in plan.selectedEpisodeKeys
+                            episode.batchKey(seasonNumber) in plan.selectedEpisodeKeys
                         }
                         val chipText = if (countInSeason > 0) "$seasonLabel ($countInSeason)" else seasonLabel
                         val isSelectedSeason = plan.visibleSeason == seasonNumber
@@ -207,7 +209,7 @@ private fun EpisodeSelectionDialog(
                     key = { it.id.ifBlank { "${it.season}_${it.episode}" } },
                 ) { episode ->
                     val episodeNumber = episode.episode ?: 0
-                    val key = batchEpisodeKey(plan.visibleSeason, episodeNumber)
+                    val key = episode.batchKey(plan.visibleSeason)
                     val isChecked = key in plan.selectedEpisodeKeys
                     val downloaded = isDownloaded(episode, plan.visibleSeason)
                     val watched = plan.isEpisodeWatched(episode, plan.visibleSeason, isEpisodeWatched)
@@ -239,7 +241,7 @@ private fun EpisodeSelectionDialog(
                             Column(modifier = Modifier.weight(1f)) {
                                 val episodeTitle = episode.title?.takeIf { it.isNotBlank() } ?: stringResource(Res.string.downloads_episode_fallback_title, episodeNumber)
                                 Text(
-                                    text = "E$episodeNumber • $episodeTitle",
+                                    text = localizedEpisodeLabel(plan.visibleSeason, episodeNumber, episodeTitle),
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                     color = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
@@ -429,11 +431,9 @@ private fun EpisodeSourcePlanRow(
     onChangeSource: () -> Unit,
 ) {
     val episodeTitle = item.episode.title?.takeIf { it.isNotBlank() } ?: defaultTitle
-    val displayText = if (item.episode.episode != null) {
-        "E${item.episode.episode} • $episodeTitle"
-    } else {
-        episodeTitle
-    }
+    val displayText = item.episode.episode?.let { episodeNumber ->
+        localizedEpisodeLabel(item.episode.season ?: 0, episodeNumber, episodeTitle)
+    } ?: episodeTitle
 
     Surface(
         modifier = Modifier.fillMaxWidth(),

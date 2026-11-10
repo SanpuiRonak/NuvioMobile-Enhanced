@@ -1698,7 +1698,6 @@ fun MetaDetailsScreen(
                                 onConfirm = {
                                     val message = when (BatchDownloadCoordinator.queuePlan()) {
                                         BatchQueueResult.Queued -> Res.string.downloads_enqueue_started
-                                        BatchQueueResult.RequiresWifi -> Res.string.downloads_enqueue_requires_wifi
                                         BatchQueueResult.NothingToQueue -> Res.string.season_download_no_source_found
                                     }
                                     detailsScope.launch { NuvioToastController.show(getString(message)) }

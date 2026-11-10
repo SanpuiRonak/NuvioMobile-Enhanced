@@ -176,7 +176,9 @@ fun StreamsScreen(
         WatchedRepository.ensureLoaded()
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
-    remember { DownloadsRepository.ensureLoaded() }
+    remember {
+        DownloadsRepository.ensureLoaded()
+    }
     val isEpisode = seasonNumber != null && episodeNumber != null
     val clipboardManager = LocalClipboardManager.current
     val streamLinkCopiedText = stringResource(Res.string.streams_link_copied)
@@ -1561,8 +1563,12 @@ internal fun StreamSearchEmptyBlock(modifier: Modifier = Modifier) {
 /** The source name to show; the downloaded copy is labelled here because it's built outside composition. */
 @Composable
 internal fun AddonStreamGroup.displayName(): String =
-    if (addonId == DOWNLOADED_ADDON_ID) stringResource(Res.string.provider_downloaded) else addonName
+    displayAddonName(addonId, addonName)
 
 @Composable
 internal fun StreamItem.displayAddonName(): String =
+    displayAddonName(addonId, addonName)
+
+@Composable
+internal fun displayAddonName(addonId: String, addonName: String): String =
     if (addonId == DOWNLOADED_ADDON_ID) stringResource(Res.string.provider_downloaded) else addonName

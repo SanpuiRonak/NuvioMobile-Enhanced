@@ -70,9 +70,9 @@ internal class OfflineShowMetadataStore {
     }
 
     /** Merges fresh details into the stored copy, keeping stored values the new copy lacks. */
-    fun merge(meta: MetaDetails) {
+    fun merge(meta: MetaDetails): Boolean {
         val existing = byShowId[meta.id]
-        byShowId[meta.id] = StoredDownloadedShowMeta(
+        val updated = StoredDownloadedShowMeta(
             showId = meta.id,
             title = meta.name,
             type = meta.type,
@@ -88,6 +88,9 @@ internal class OfflineShowMetadataStore {
             videos = meta.videos.map { it.toStored() }.ifEmpty { existing?.videos.orEmpty() },
             cast = meta.cast.map { it.toStored() }.ifEmpty { existing?.cast.orEmpty() },
         )
+        if (updated == existing) return false
+        byShowId[meta.id] = updated
+        return true
     }
 
     /** Records what is known about a title when no full details are cached, e.g. from a deep link. */

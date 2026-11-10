@@ -49,6 +49,12 @@ private class StreamSource(
 )
 
 internal object StreamSourceLoader {
+    const val EMBEDDED_ADDON_ID = "embedded"
+
+    /** Wraps a title's embedded streams as one group; [streams] must not be empty. */
+    fun embeddedStreamGroup(streams: List<StreamItem>): AddonStreamGroup =
+        AddonStreamGroup(addonName = streams.first().addonName, addonId = EMBEDDED_ADDON_ID, streams = streams, isLoading = false)
+
     private val log = Logger.withTag("StreamSourceLoader")
 
     fun resolveTargets(

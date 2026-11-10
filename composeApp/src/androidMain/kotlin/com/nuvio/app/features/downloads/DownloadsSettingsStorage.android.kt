@@ -7,7 +7,6 @@ actual object DownloadsSettingsStorage {
     private const val preferencesName = "nuvio_downloads_settings"
     private const val allowMobileDataDownloadsKey = "allow_mobile_data_downloads"
     private const val showDownloadButtonKey = "show_download_button"
-    private const val preferredResolutionKey = "preferred_download_resolution"
 
     private var preferences: SharedPreferences? = null
 
@@ -47,13 +46,13 @@ actual object DownloadsSettingsStorage {
             ?.apply()
     }
 
-    actual fun loadPreferredResolution(): String? =
-        preferences?.getString(preferredResolutionKey, null)
+    actual fun loadString(key: String): String? =
+        preferences?.getString(key, null)
 
-    actual fun savePreferredResolution(storageValue: String) {
+    actual fun saveString(key: String, value: String) {
         preferences
             ?.edit()
-            ?.putString(preferredResolutionKey, storageValue)
+            ?.putString(key, value)
             ?.apply()
     }
 

@@ -1,6 +1,7 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.logging.InAppLogger
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DebridProviders
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.debrid.DebridStreamFacts
@@ -34,6 +35,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.getString
 
 enum class EpisodePlanStatus {
     AlreadyDownloaded,
@@ -85,10 +88,10 @@ data class BatchDownloadPlan(
         get() = selectedEpisodeKeys.size
 
     /** The season shown at source-selection step [index]. */
-    fun seasonToSourceAt(index: Int): Int = seasonsToSource.getOrNull(index) ?: initialSeason
+    fun seasonToSourceAt(index: Int): Int = seasonsToSource[index]
 
     fun isSeasonSelected(season: Int): Boolean =
-        episodesBySeason[season].orEmpty().any { batchEpisodeKey(season, it.episode ?: 0) in selectedEpisodeKeys }
+        episodesBySeason[season].orEmpty().any { it.batchKey(season) in selectedEpisodeKeys }
 
     fun isEpisodeWatched(
         episode: MetaVideo,
@@ -103,11 +106,11 @@ data class BatchDownloadPlan(
 enum class BatchQueueResult {
     Queued,
     NothingToQueue,
-    RequiresWifi,
 }
 
-fun batchEpisodeKey(season: Int, episode: Int?): String =
-    if (episode != null) "${season}_$episode" else "${season}_single"
+fun batchEpisodeKey(season: Int, episode: Int?): String = "${season}_${episode ?: 0}"
+
+fun MetaVideo.batchKey(season: Int): String = batchEpisodeKey(season, episode)
 
 /** True when the content already has a download that is finished, running, paused or waiting. */
 private fun List<DownloadItem>.hasDownloadFor(logicalKey: String): Boolean =
@@ -317,29 +320,34 @@ object BatchDownloadCoordinator {
         val plan = _activePlan.value ?: return
         val parentJob = planJob ?: return
         val existingPlan = plan.seasonPlans[season]
-        if (existingPlan != null && !existingPlan.isPlanning && existingPlan.episodes.isNotEmpty()) return
+        if (existingPlan?.isPlanning == true) return
 
         val selectedEpisodes = plan.episodesBySeason[season].orEmpty().filter { episode ->
-            plan.isSingleTitle || batchEpisodeKey(season, episode.episode ?: 0) in plan.selectedEpisodeKeys
+            plan.isSingleTitle || episode.batchKey(season) in plan.selectedEpisodeKeys
         }
         if (selectedEpisodes.isEmpty()) return
 
         DownloadsRepository.ensureLoaded()
         val currentDownloads = DownloadsRepository.uiState.value.items
+        val previousItems = existingPlan?.episodes.orEmpty().associateBy { it.episode }
         val initialItems = selectedEpisodes.map { episode ->
             val isDownloaded = isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, episode, season)
-            PlannedEpisodeItem(
-                episode = episode,
-                status = if (isDownloaded) EpisodePlanStatus.AlreadyDownloaded else EpisodePlanStatus.Loading,
-            )
+            val previous = previousItems[episode]
+            when {
+                isDownloaded -> PlannedEpisodeItem(episode, EpisodePlanStatus.AlreadyDownloaded)
+                previous != null -> previous
+                else -> PlannedEpisodeItem(episode, EpisodePlanStatus.Loading)
+            }
         }
+        val episodesToLoad = initialItems.filter { it.status == EpisodePlanStatus.Loading }.map { it.episode }
         updateSeasonPlan(plan.meta.id, season) {
-            PlannedSeasonEpisodes(season = season, episodes = initialItems, isPlanning = true)
+            PlannedSeasonEpisodes(season = season, episodes = initialItems, isPlanning = episodesToLoad.isNotEmpty())
         }
+        if (episodesToLoad.isEmpty()) return
 
         scope.launch(parentJob) {
             val preferredResolution = DownloadsSettingsRepository.preferredResolution.value
-            selectedEpisodes.map { episode ->
+            episodesToLoad.map { episode ->
                 launch(Dispatchers.Default) {
                     sourceLoadPermits.withPermit {
                         val target = plan.meta.batchTargetFor(episode, season)
@@ -356,10 +364,11 @@ object BatchDownloadCoordinator {
                         val selection = StreamSourcePrefillSelector.selectForBatch(streams, preferredResolution)
 
                         updateEpisode(plan.meta.id, season, episode) { item ->
-                            if (selection == null) {
+                            if (item.status == EpisodePlanStatus.AlreadyDownloaded) item
+                            else if (selection == null) {
                                 item.copy(allAvailableStreams = streams, status = EpisodePlanStatus.NoSourceFound)
                             } else {
-                                item.withSelectedStream(selection.stream, selection.facts)
+                                item.withSelectedStream(selection.stream, selection.facts, selection.sizeBytes)
                                     .copy(allAvailableStreams = streams)
                             }
                         }
@@ -367,6 +376,7 @@ object BatchDownloadCoordinator {
                 }
             }.joinAll()
             updateSeasonPlan(plan.meta.id, season) { it?.copy(isPlanning = false) }
+            loadSourcesForSeason(season)
         }
     }
 
@@ -376,10 +386,10 @@ object BatchDownloadCoordinator {
         updateEpisode(plan.meta.id, season, episode) { it.withSelectedStream(stream, facts) }
     }
 
-    private fun PlannedEpisodeItem.withSelectedStream(stream: StreamItem, facts: DebridStreamFacts) = copy(
+    private fun PlannedEpisodeItem.withSelectedStream(stream: StreamItem, facts: DebridStreamFacts, sizeBytes: Long? = null) = copy(
         streamCandidate = stream,
         resolutionLabel = facts.qualityBadge(),
-        sizeBytes = facts.size?.takeIf { it > 0 },
+        sizeBytes = sizeBytes ?: facts.size?.takeIf { it > 0 },
         status = EpisodePlanStatus.Ready,
     )
 
@@ -430,6 +440,8 @@ object BatchDownloadCoordinator {
         val itemsToQueue = plan.seasonsToSource
             .flatMap { season ->
                 plan.seasonPlans[season]?.episodes.orEmpty().mapNotNull { item ->
+                    val key = item.episode.batchKey(season)
+                    if (!plan.isSingleTitle && key !in plan.selectedEpisodeKeys) return@mapNotNull null
                     item.streamCandidate?.let { stream -> Triple(season, item.episode, stream) }
                 }
             }
@@ -438,10 +450,9 @@ object BatchDownloadCoordinator {
         closePlan()
         if (itemsToQueue.isEmpty()) return BatchQueueResult.NothingToQueue
 
-        if (!isDownloadNetworkAllowed()) return BatchQueueResult.RequiresWifi
-
         val startingProfileId = ProfileRepository.activeProfileId
         scope.launch(queueJob + Dispatchers.Default) {
+            var failedCount = 0
             for ((season, episode, stream) in itemsToQueue) {
                 val target = plan.meta.batchTargetFor(episode, season)
                 val streamToEnqueue = when (val resolved = resolveDownloadableStream(stream, target)) {
@@ -449,24 +460,31 @@ object BatchDownloadCoordinator {
                     StreamCandidateResolution.MissingApiKey -> {
                         // Every remaining episode needs the same resolver, so stop the batch.
                         InAppLogger.warn("Downloads/Batch", "Missing debrid API key, stopping batch queue")
+                        failedCount += itemsToQueue.size - itemsToQueue.indexOfFirst { it.second == episode }
                         break
                     }
                     is StreamCandidateResolution.Failed -> {
                         InAppLogger.warn("Downloads/Batch", "Skipping S${target.season}E${target.episode}: ${resolved.reason}")
+                        failedCount++
                         continue
                     }
                 }
 
                 withContext(Dispatchers.Main) {
                     if (ProfileRepository.activeProfileId != startingProfileId) return@withContext
-                    enqueue(plan.meta, episode, target, streamToEnqueue)
+                    if (!enqueue(plan.meta, episode, target, streamToEnqueue)) failedCount++
+                }
+            }
+            if (failedCount > 0) {
+                withContext(Dispatchers.Main) {
+                    NuvioToastController.show(getString(if (failedCount == 1) Res.string.batch_download_failed_single else Res.string.batch_download_failed_multiple, failedCount))
                 }
             }
         }
         return BatchQueueResult.Queued
     }
 
-    private fun enqueue(meta: MetaDetails, episode: MetaVideo, target: BatchEpisodeTarget, stream: StreamItem) {
+    private fun enqueue(meta: MetaDetails, episode: MetaVideo, target: BatchEpisodeTarget, stream: StreamItem): Boolean {
         val episodeDetails = episode.takeUnless { target.isSingleTitle }
         val result = DownloadsRepository.enqueueFromStream(
             contentType = meta.type,
@@ -484,9 +502,9 @@ object BatchDownloadCoordinator {
             stream = stream,
             showMeta = meta,
         )
-        if (result != DownloadEnqueueResult.Started && result != DownloadEnqueueResult.Replaced) {
-            InAppLogger.warn("Downloads/Batch", "Enqueue returned ${result.name} for S${target.season}E${target.episode}")
-        }
+        val succeeded = result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced
+        if (!succeeded) InAppLogger.warn("Downloads/Batch", "Enqueue returned ${result.name} for S${target.season}E${target.episode}")
+        return succeeded
     }
 
     private sealed interface StreamCandidateResolution {

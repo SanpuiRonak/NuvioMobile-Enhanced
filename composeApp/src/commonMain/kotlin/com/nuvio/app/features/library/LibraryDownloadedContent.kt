@@ -257,7 +257,7 @@ internal fun ActiveDownloadPosterCard(
                 StatusBadge(item = item, progress = progress, modifier = Modifier.align(Alignment.TopStart))
                 if (onTogglePause != null && item.status != DownloadStatus.Failed) {
                     PauseResumeButton(
-                        isActive = item.status != DownloadStatus.Paused,
+                        showsPause = item.status != DownloadStatus.Paused,
                         onClick = onTogglePause,
                         modifier = Modifier.align(Alignment.TopEnd),
                     )
@@ -362,7 +362,7 @@ private fun BadgeIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, tin
 
 @Composable
 private fun PauseResumeButton(
-    isActive: Boolean,
+    showsPause: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -376,8 +376,8 @@ private fun PauseResumeButton(
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
-                imageVector = if (isActive) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                contentDescription = stringResource(if (isActive) Res.string.downloads_action_pause else Res.string.action_resume),
+                imageVector = if (showsPause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                contentDescription = stringResource(if (showsPause) Res.string.downloads_action_pause else Res.string.action_resume),
                 modifier = Modifier.size(14.dp),
                 tint = Color.White,
             )

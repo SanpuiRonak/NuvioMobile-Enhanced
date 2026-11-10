@@ -5,7 +5,6 @@ import platform.Foundation.NSUserDefaults
 actual object DownloadsSettingsStorage {
     private const val allowMobileDataDownloadsKey = "allow_mobile_data_downloads"
     private const val showDownloadButtonKey = "show_download_button"
-    private const val preferredResolutionKey = "preferred_download_resolution"
 
     actual fun loadAllowMobileDataDownloads(): Boolean? {
         val defaults = NSUserDefaults.standardUserDefaults
@@ -33,11 +32,11 @@ actual object DownloadsSettingsStorage {
         NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = showDownloadButtonKey)
     }
 
-    actual fun loadPreferredResolution(): String? =
-        NSUserDefaults.standardUserDefaults.stringForKey(preferredResolutionKey)
+    actual fun loadString(key: String): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey(key)
 
-    actual fun savePreferredResolution(storageValue: String) {
-        NSUserDefaults.standardUserDefaults.setObject(storageValue, forKey = preferredResolutionKey)
+    actual fun saveString(key: String, value: String) {
+        NSUserDefaults.standardUserDefaults.setObject(value, forKey = key)
     }
 
     actual fun loadInt(key: String): Int? {

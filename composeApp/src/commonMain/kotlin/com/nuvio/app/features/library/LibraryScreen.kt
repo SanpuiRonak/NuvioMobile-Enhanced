@@ -71,7 +71,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ViewAgenda
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
-import com.nuvio.app.features.downloads.ActiveAndQueuedDownloadsDialog
+import com.nuvio.app.features.downloads.DownloadsQueueDialog
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsPlatformDownloader
 import com.nuvio.app.features.downloads.DownloadsRepository
@@ -892,7 +892,7 @@ fun LibraryScreen(
     }
 
     if (showActiveQueuedDialog) {
-        ActiveAndQueuedDownloadsDialog(
+        DownloadsQueueDialog(
             onDismissRequest = { showActiveQueuedDialog = false },
             onOpenDownload = onOpenDownload,
         )
@@ -908,7 +908,7 @@ fun LibraryScreen(
             confirmText = stringResource(Res.string.action_yes),
             dismissText = stringResource(Res.string.action_no),
             onConfirm = {
-                DownloadsRepository.cancelDownloads(pendingDeletionIds)
+                pendingDeletionIds.forEach(DownloadsRepository::cancelDownload)
                 downloadPendingDeletionIds = null
             },
             onDismiss = { downloadPendingDeletionIds = null },

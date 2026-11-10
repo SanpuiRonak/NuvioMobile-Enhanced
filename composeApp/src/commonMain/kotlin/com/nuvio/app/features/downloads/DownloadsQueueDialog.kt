@@ -76,7 +76,7 @@ private val statusDisplayOrder = listOf(
 
 /** Lists running, queued, paused and failed downloads, grouped by show and season, with bulk actions. */
 @Composable
-fun ActiveAndQueuedDownloadsDialog(
+fun DownloadsQueueDialog(
     onDismissRequest: () -> Unit,
     onOpenDownload: ((DownloadItem) -> Unit)? = null,
 ) {
@@ -194,7 +194,7 @@ fun ActiveAndQueuedDownloadsDialog(
             confirmText = stringResource(Res.string.action_yes),
             dismissText = stringResource(Res.string.action_no),
             onConfirm = {
-                DownloadsRepository.cancelDownloads(toDelete)
+                toDelete.forEach(DownloadsRepository::cancelDownload)
                 selectedIds = selectedIds - toDelete.toSet()
                 pendingDeleteIds = null
             },
@@ -275,7 +275,7 @@ private fun SelectionActionsBar(
                     ActionPill(
                         icon = Icons.Rounded.PlayArrow,
                         label = stringResource(Res.string.downloads_action_resume_count, toResume.size),
-                        onClick = { DownloadsRepository.resumeOrRetryDownloads(toResume.map { it.id }) },
+                        onClick = { toResume.forEach { DownloadsRepository.resumeDownload(it.id) } },
                     )
                 }
                 ActionPill(
@@ -705,8 +705,7 @@ private fun QueueRowThumbnail(item: DownloadItem, progress: Float) {
 private fun QueueRowDetails(item: DownloadItem, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(1.dp)) {
         val title = if (item.isEpisode) {
-            val episodeTitle = item.episodeTitle?.takeIf { it.isNotBlank() } ?: item.displayTitle()
-            "S${item.seasonNumber}:E${item.episodeNumber} • $episodeTitle"
+            localizedEpisodeLabel(item.seasonNumber ?: 0, item.episodeNumber ?: 0, item.displayTitle())
         } else {
             item.displayTitle()
         }

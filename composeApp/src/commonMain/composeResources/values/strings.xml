@@ -3147,6 +3147,7 @@
     <string name="downloads_storage_other">Other Apps &amp; System</string>
     <string name="downloads_storage_free">Free Space</string>
     <string name="downloads_episode_fallback_title">Episode %1$d</string>
+    <string name="downloads_episode_label">S%1$d:E%2$d • %3$s</string>
     <string name="downloads_stream_selected">Stream selected</string>
     <string name="downloads_stream_fallback_title">Stream</string>
     <string name="downloads_action_queue">Queue download</string>
@@ -3162,4 +3163,6 @@
     <string name="downloads_episodes_selected_multi_season">%1$d episodes selected across %2$d seasons</string>
     <string name="downloads_next_season">Next season</string>
     <string name="downloads_episodes_out_of_downloaded">Episode %1$d out of %2$d downloaded</string>
+    <string name="batch_download_failed_single">%1$d episode could not be queued</string>
+    <string name="batch_download_failed_multiple">%1$d episodes could not be queued</string>
 </resources>

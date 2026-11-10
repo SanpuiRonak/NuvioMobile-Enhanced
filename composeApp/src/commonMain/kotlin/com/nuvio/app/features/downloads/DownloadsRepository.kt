@@ -56,10 +56,19 @@ object DownloadsRepository {
             DownloadsSettingsRepository.allowMobileDataDownloads,
             NetworkStatusRepository.uiState,
         ) { _, _, _ -> }
-            .onEach { if (hasLoaded) advanceDownloadQueue() }
-            .launchIn(scope)
-        MetaDetailsRepository.uiState
-            .onEach { state -> if (hasLoaded) state.meta?.let(::refreshShowMetadataIfDownloaded) }
+            .onEach {
+                if (!hasLoaded) return@onEach
+                if (!isDownloadNetworkAllowed()) {
+                    _uiState.value.items.filter { it.status == DownloadStatus.Downloading }.forEach { item ->
+                        activeHandles.remove(item.id)?.cancel()
+                        mutateItem(item.id) { current ->
+                            if (current.status == DownloadStatus.Downloading) current.copy(status = DownloadStatus.Queued) else current
+                        }
+                    }
+                    persist()
+                }
+                advanceDownloadQueue()
+            }
             .launchIn(scope)
     }
 
@@ -94,11 +103,11 @@ object DownloadsRepository {
     }
 
     /** Keeps the offline copy of [meta] current, but only for titles that have downloads. */
-    private fun refreshShowMetadataIfDownloaded(meta: MetaDetails) {
+    fun onMetaLoaded(meta: MetaDetails) {
+        if (!hasLoaded) return
         val hasDownloads = _uiState.value.items.any { it.parentMetaId == meta.id }
         if (!hasDownloads && offlineMetadata[meta.id] == null) return
-        offlineMetadata.merge(meta)
-        persist()
+        if (offlineMetadata.merge(meta)) persist()
     }
 
     fun findEpisodeDownload(
@@ -219,10 +228,6 @@ object DownloadsRepository {
 
         if (!sourceUrl.isSupportedDownloadUrl()) {
             return DownloadEnqueueResult.UnsupportedFormat
-        }
-
-        if (!isDownloadNetworkAllowed()) {
-            return DownloadEnqueueResult.RequiresWifi
         }
 
         val now = DownloadsClock.nowEpochMs()
@@ -391,7 +396,7 @@ object DownloadsRepository {
         if (isAnyActive) pauseSeriesDownloads(showId) else resumeOrRetrySeriesDownloads(showId)
     }
 
-    fun pauseSeriesDownloads(seriesId: String) {
+    private fun pauseSeriesDownloads(seriesId: String) {
         pauseActiveDownloadsMatching { it.parentMetaId == seriesId }
     }
 
@@ -409,7 +414,7 @@ object DownloadsRepository {
     }
 
     /** Resumes paused episodes of [seriesId] and retries its failed ones. */
-    fun resumeOrRetrySeriesDownloads(seriesId: String) {
+    private fun resumeOrRetrySeriesDownloads(seriesId: String) {
         ensureLoaded()
         _uiState.value.items
             .filter { it.parentMetaId == seriesId && it.isResumable }
@@ -458,16 +463,7 @@ object DownloadsRepository {
     }
 
     fun pauseDownloads(downloadIds: Collection<String>) {
-        downloadIds.forEach(::pauseDownload)
-    }
-
-    /** Resumes paused downloads and retries failed ones. */
-    fun resumeOrRetryDownloads(downloadIds: Collection<String>) {
-        downloadIds.forEach(::resumeDownload)
-    }
-
-    fun cancelDownloads(downloadIds: Collection<String>) {
-        downloadIds.forEach(::cancelDownload)
+        pauseActiveDownloadsMatching { it.id in downloadIds }
     }
 
     internal fun reattachBackgroundDownload(downloadId: String) {
@@ -527,9 +523,7 @@ object DownloadsRepository {
                 localUriNormalized
             }
 
-        // Downloads already running in the background keep going regardless of the network policy;
-        // only the concurrency limits can send them back to the queue.
-        val restorePolicy = DownloadQueuePolicy.current().copy(isNetworkAllowed = true)
+        val restorePolicy = DownloadQueuePolicy.current()
         val keptDownloading = mutableListOf<DownloadItem>()
 
         val queuedNormalized = normalized.map { item ->

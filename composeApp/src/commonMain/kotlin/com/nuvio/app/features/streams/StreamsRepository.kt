@@ -149,12 +149,7 @@ object StreamsRepository {
         if (embeddedStreams.isNotEmpty()) {
             log.d { "Using ${embeddedStreams.size} embedded streams for type=$type id=$videoId" }
             InAppLogger.info("Streams/StreamsRepository", "Using embedded streams count=${embeddedStreams.size} type=$type id=$videoId")
-            val group = AddonStreamGroup(
-                addonName = embeddedStreams.first().addonName,
-                addonId = "embedded",
-                streams = embeddedStreams,
-                isLoading = false,
-            )
+            val group = StreamSourceLoader.embeddedStreamGroup(embeddedStreams)
             val presentedGroup = StreamBadgePresentation.apply(
                 groups = listOf(group),
                 rules = streamBadgeRules,
@@ -371,9 +366,6 @@ object StreamsRepository {
                 }
             }
 
-            fun presentStreamGroup(group: AddonStreamGroup): AddonStreamGroup =
-                StreamSourceLoader.presentStreamGroup(group, streamBadgeRules, debridSettings)
-
             fun publishAddonGroup(group: AddonStreamGroup) {
                 _uiState.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -395,7 +387,7 @@ object StreamsRepository {
 
             fun publishAddonGroupAfterCacheCheck(group: AddonStreamGroup) {
                 if (group.addonId !in installedAddonIds || group.streams.isEmpty()) {
-                    publishAddonGroup(presentStreamGroup(group))
+                    publishAddonGroup(StreamSourceLoader.presentStreamGroup(group, streamBadgeRules, debridSettings))
                     return
                 }
 
@@ -405,7 +397,7 @@ object StreamsRepository {
                     eligibleGroupIds = eligibleGroupIds,
                 )
                 if (!shouldWaitForCacheCheck) {
-                    publishAddonGroup(presentStreamGroup(group))
+                    publishAddonGroup(StreamSourceLoader.presentStreamGroup(group, streamBadgeRules, debridSettings))
                     return
                 }
 
@@ -419,7 +411,7 @@ object StreamsRepository {
                         groups = listOf(checkingGroup),
                         eligibleGroupIds = eligibleGroupIds,
                     ).firstOrNull() ?: checkingGroup
-                    publishAddonGroup(presentStreamGroup(availabilityGroup))
+                    publishAddonGroup(StreamSourceLoader.presentStreamGroup(availabilityGroup, streamBadgeRules, debridSettings))
                 }
                 debridAvailabilityJobs += availabilityJob
             }

@@ -10,6 +10,7 @@ import com.nuvio.app.features.downloads.isSupportedDownloadUrl
 internal data class StreamSelectionResult(
     val stream: StreamItem,
     val facts: DebridStreamFacts,
+    val sizeBytes: Long?,
 )
 
 /**
@@ -53,7 +54,7 @@ internal object StreamSourcePrefillSelector {
                 .minWithOrNull(compareByDescending<Candidate> { it.resolution }.then(smallestFirst))
             ?: candidates.minWithOrNull(smallestFirst)
             ?: return null
-        return StreamSelectionResult(stream = selected.stream, facts = selected.facts)
+        return StreamSelectionResult(stream = selected.stream, facts = selected.facts, sizeBytes = selected.size)
     }
 
     private fun isDownloadCapable(stream: StreamItem): Boolean {

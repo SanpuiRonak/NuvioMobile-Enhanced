@@ -135,7 +135,7 @@ internal fun DownloadItemActions(
             DownloadStatus.Failed -> Triple(
                 Icons.Rounded.Refresh,
                 Res.string.action_retry,
-                { DownloadsRepository.retryDownload(item.id) },
+                { DownloadsRepository.resumeDownload(item.id) },
             )
             DownloadStatus.Completed -> Triple(Icons.Rounded.PlayArrow, Res.string.action_play, onPlay)
         }

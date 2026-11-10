@@ -738,11 +738,7 @@ internal fun StreamDestination(
             sourceUrl = sourceUrl,
             sourceHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request),
             sourceResponseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response),
-            externalSubtitles = if (stream.addonId == DOWNLOADED_ADDON_ID) {
-                DownloadSubtitles.localSubtitles(sourceUrl)
-            } else {
-                stream.externalSubtitles
-            },
+            externalSubtitles = stream.externalSubtitles,
             streamType = stream.streamType,
             logo = launch.logo,
             poster = launch.poster,

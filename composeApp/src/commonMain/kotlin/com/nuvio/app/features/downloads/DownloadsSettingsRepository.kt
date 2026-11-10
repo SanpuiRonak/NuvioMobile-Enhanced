@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * are inherently per-device facts, not per-profile ones.
  */
 object DownloadsSettingsRepository {
+    private const val PREFERRED_RESOLUTION_KEY = "preferred_download_resolution"
     private val _allowMobileDataDownloads = MutableStateFlow(false)
     val allowMobileDataDownloads: StateFlow<Boolean> = _allowMobileDataDownloads.asStateFlow()
 
@@ -34,7 +35,7 @@ object DownloadsSettingsRepository {
         hasLoaded = true
         _allowMobileDataDownloads.value = DownloadsSettingsStorage.loadAllowMobileDataDownloads() ?: false
         _showDownloadButton.value = DownloadsSettingsStorage.loadShowDownloadButton() ?: true
-        _preferredResolution.value = DownloadPreferredResolution.fromStorage(DownloadsSettingsStorage.loadPreferredResolution())
+        _preferredResolution.value = DownloadPreferredResolution.fromStorage(DownloadsSettingsStorage.loadString(PREFERRED_RESOLUTION_KEY))
         _concurrencyLimits.value = DownloadConcurrencyLimit.entries.associateWith { limit ->
             DownloadsSettingsStorage.loadInt(limit.storageKey)?.let(limit::clamp) ?: limit.defaultValue
         }
@@ -59,7 +60,7 @@ object DownloadsSettingsRepository {
         ensureLoaded()
         if (_preferredResolution.value == resolution) return
         _preferredResolution.value = resolution
-        DownloadsSettingsStorage.savePreferredResolution(resolution.name)
+        DownloadsSettingsStorage.saveString(PREFERRED_RESOLUTION_KEY, resolution.name)
     }
 
     fun concurrencyLimit(limit: DownloadConcurrencyLimit): Int {

@@ -321,16 +321,12 @@ internal object DebridStreamMetadata {
         parsedQuality: String?,
         searchText: String,
     ): DebridStreamResolution {
-        // 1. Explicit resolution marker in parsed resolution metadata (preserves genuine parsed resolution)
         explicitResolutionValue(parsedResolution)?.let { return it }
 
-        // 2. Explicit resolution marker in title / filename / stream search text
         explicitResolutionValue(searchText)?.let { return it }
 
-        // 3. Explicit resolution marker in parsed quality (in case resolution was placed there)
         explicitResolutionValue(parsedQuality)?.let { return it }
 
-        // 4. Fallback to generic quality labels (e.g. "HD" -> 720p, "SD" -> 480p)
         return genericQualityResolutionValue(parsedResolution)
             ?: genericQualityResolutionValue(parsedQuality)
             ?: genericQualityResolutionValue(searchText)

@@ -1335,11 +1335,11 @@ internal fun rememberEpisodeDownloadLookup(metaId: String): (MetaVideo) -> Downl
 
 @Composable
 internal fun EpisodeDownloadBadge(
-    downloadItem: DownloadItem?,
+    downloadItem: DownloadItem,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
-    if (downloadItem == null || downloadItem.status == DownloadStatus.Failed) return
+    if (downloadItem.status == DownloadStatus.Failed) return
 
     val hasKnownSize = downloadItem.knownProgress != null
     val animatedProgress = animatedDownloadProgress(downloadItem.progressFraction)
