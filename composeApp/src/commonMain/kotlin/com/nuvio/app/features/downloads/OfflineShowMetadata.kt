@@ -38,7 +38,7 @@ data class StoredDownloadedCastMeta(
 )
 
 @Serializable
-data class StoredDownloadedShowMeta(
+data class StoredOfflineMeta(
     val showId: String,
     val title: String,
     val type: String = "series",
@@ -59,14 +59,14 @@ data class StoredDownloadedShowMeta(
  * Offline copies of title details, kept only for titles that have downloads so their
  * details page still works without a connection.
  */
-internal class OfflineShowMetadataStore {
-    private val byShowId = mutableMapOf<String, StoredDownloadedShowMeta>()
+internal class OfflineMetadataStore {
+    private val byShowId = mutableMapOf<String, StoredOfflineMeta>()
 
-    operator fun get(showId: String): StoredDownloadedShowMeta? = byShowId[showId]
+    operator fun get(showId: String): StoredOfflineMeta? = byShowId[showId]
 
-    fun snapshot(): Map<String, StoredDownloadedShowMeta> = byShowId.toMap()
+    fun snapshot(): Map<String, StoredOfflineMeta> = byShowId.toMap()
 
-    fun replaceAll(stored: Map<String, StoredDownloadedShowMeta>) {
+    fun replaceAll(stored: Map<String, StoredOfflineMeta>) {
         byShowId.clear()
         byShowId.putAll(stored)
     }
@@ -80,7 +80,7 @@ internal class OfflineShowMetadataStore {
     /** Merges fresh details into the stored copy, keeping stored values the new copy lacks. */
     fun merge(meta: MetaDetails): Boolean {
         val existing = byShowId[meta.id]
-        val updated = StoredDownloadedShowMeta(
+        val updated = StoredOfflineMeta(
             showId = meta.id,
             title = meta.name.boundedTitle(),
             type = meta.type,
@@ -111,7 +111,7 @@ internal class OfflineShowMetadataStore {
         background: String?,
         episode: StoredDownloadedVideoMeta?,
     ) {
-        val existing = byShowId[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title.boundedTitle(), type = type)
+        val existing = byShowId[showId] ?: StoredOfflineMeta(showId = showId, title = title.boundedTitle(), type = type)
         val isNewEpisode = episode != null &&
             existing.videos.none { it.season == episode.season && it.episode == episode.episode }
         byShowId[showId] = existing.copy(
@@ -188,7 +188,7 @@ fun StoredDownloadedCastMeta.toMetaPerson(): MetaPerson =
     )
 
 /** Builds offline details from the stored show metadata plus the show's downloaded items. */
-fun StoredDownloadedShowMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
+fun StoredOfflineMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
     val downloadedEpisodes = showDownloads
         .filter { it.parentMetaId == showId && it.isEpisode }
         .sortedForSeriesDownloads()

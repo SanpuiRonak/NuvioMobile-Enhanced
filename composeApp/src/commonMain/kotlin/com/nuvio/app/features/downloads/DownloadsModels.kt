@@ -91,6 +91,9 @@ data class DownloadItem(
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
 ) {
+    val contentId: String
+        get() = parentMetaId.trim().ifBlank { id }
+
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null
 
@@ -139,6 +142,9 @@ enum class DownloadEnqueueResult {
     Queued,
     MissingUrl,
     UnsupportedFormat;
+
+    val isSuccess: Boolean
+        get() = this == Started || this == Replaced || this == Queued
 
     fun toastMessage(): String = runBlocking {
         when (this@DownloadEnqueueResult) {

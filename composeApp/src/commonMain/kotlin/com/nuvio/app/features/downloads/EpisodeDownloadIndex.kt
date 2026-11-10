@@ -23,9 +23,9 @@ class EpisodeDownloadIndex private constructor(
     companion object {
         fun build(items: List<DownloadItem>, parentMetaId: String): EpisodeDownloadIndex {
             val normalizedParentMetaId = parentMetaId.trim()
-            val titleItems = items.filter { it.parentMetaId == normalizedParentMetaId }
+            val titleItems = items.filter { it.parentMetaId.trim() == normalizedParentMetaId }
             return EpisodeDownloadIndex(
-                byVideoId = items.filter { it.videoId.isNotBlank() }.groupBy { it.videoId.trim() },
+                byVideoId = titleItems.filter { it.videoId.isNotBlank() }.groupBy { it.videoId.trim() },
                 byEpisode = titleItems
                     .filter { it.isEpisode }
                     .groupBy { checkNotNull(it.seasonNumber) to checkNotNull(it.episodeNumber) },
@@ -36,7 +36,7 @@ class EpisodeDownloadIndex private constructor(
         private fun preferred(matches: List<DownloadItem>): DownloadItem? =
             matches.firstOrNull { it.status == DownloadStatus.Downloading }
                 ?: matches.firstOrNull { it.status == DownloadStatus.Queued }
-                ?: matches.firstOrNull { it.status == DownloadStatus.Completed && it.hasPlayableLocalFile() }
+                ?: matches.firstOrNull { it.status == DownloadStatus.Completed }
                 ?: matches.firstOrNull { it.status == DownloadStatus.Completed }
                 ?: matches.firstOrNull()
     }

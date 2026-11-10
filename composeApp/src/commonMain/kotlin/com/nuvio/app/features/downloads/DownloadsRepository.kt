@@ -22,6 +22,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
@@ -34,10 +35,11 @@ object DownloadsRepository {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
-    private val offlineMetadata = OfflineShowMetadataStore()
+    private val offlineMetadata = OfflineMetadataStore()
     private var hasLoaded = false
     private var isObservingInputs = false
     private var nextDownloadOrdinal = 0L
+    private val lastProgressPersistAt = mutableMapOf<String, Long>()
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -63,15 +65,10 @@ object DownloadsRepository {
             .onEach { (_, networkAllowed) ->
                 if (!hasLoaded) return@onEach
                 if (!networkAllowed) {
-                    val running = _uiState.value.items.filter { it.status == DownloadStatus.Downloading }
-                    if (running.isNotEmpty()) {
-                        running.forEach { activeHandles.remove(it.id)?.cancel() }
-                        val ids = running.mapTo(mutableSetOf()) { it.id }
-                        publish(_uiState.value.items.map { item ->
-                            if (item.id in ids && item.status == DownloadStatus.Downloading) item.copy(status = DownloadStatus.Queued) else item
-                        })
-                        persist()
-                    }
+                    val runningIds = _uiState.value.items
+                        .filter { it.status == DownloadStatus.Downloading }
+                        .mapTo(mutableSetOf()) { it.id }
+                    setStatus(runningIds, DownloadStatus.Queued)
                 }
                 advanceDownloadQueue()
             }
@@ -96,7 +93,7 @@ object DownloadsRepository {
         notifyLiveStatusPlatform()
     }
 
-    fun getShowMetadata(showId: String): StoredDownloadedShowMeta? {
+    fun getOfflineMetadata(showId: String): StoredOfflineMeta? {
         ensureLoaded()
         return offlineMetadata[showId]
     }
@@ -300,18 +297,11 @@ object DownloadsRepository {
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
         )
-        val canStart = DownloadQueuePolicy.current().canStart(
-            showKey = queuedItem.showKey,
-            downloading = currentItems.filter { it.status == DownloadStatus.Downloading },
-        )
-        val item = if (canStart) queuedItem.copy(status = DownloadStatus.Downloading) else queuedItem
-
-        currentItems.add(0, item)
+        currentItems.add(0, queuedItem)
         publish(currentItems)
         persist()
-        if (item.status == DownloadStatus.Downloading) {
-            startDownload(item)
-        }
+        advanceDownloadQueue()
+        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: queuedItem
 
         return if (item.status == DownloadStatus.Queued) {
             DownloadEnqueueResult.Queued
@@ -353,6 +343,7 @@ object DownloadsRepository {
 
     /** Pauses the download if it is running or queued; otherwise resumes or retries it. */
     fun togglePause(downloadId: String) {
+        ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
         if (item.isActive) pauseDownload(downloadId) else resumeDownload(downloadId)
     }
@@ -360,11 +351,7 @@ object DownloadsRepository {
     /** Pauses every active episode of [showId], or resumes them all when none is active. */
     fun toggleShowPause(showId: String) {
         val isAnyActive = _uiState.value.items.any { it.parentMetaId == showId && it.isActive }
-        if (isAnyActive) pauseSeriesDownloads(showId) else resumeOrRetrySeriesDownloads(showId)
-    }
-
-    private fun pauseSeriesDownloads(seriesId: String) {
-        pauseActiveDownloadsMatching { it.parentMetaId == seriesId }
+        if (isAnyActive) pauseActiveDownloadsMatching { it.parentMetaId == showId } else resumeOrRetrySeriesDownloads(showId)
     }
 
     /** Pauses every matching active item in one update before advancing the queue. */
@@ -373,13 +360,20 @@ object DownloadsRepository {
         val current = _uiState.value.items
         val targets = current.filter { it.isActive && predicate(it) }
         if (targets.isEmpty()) return
-        targets.forEach { activeHandles.remove(it.id)?.cancel() }
         val ids = targets.mapTo(mutableSetOf()) { it.id }
+        setStatus(ids, DownloadStatus.Paused)
+        advanceDownloadQueue()
+    }
+
+    private fun setStatus(ids: Set<String>, status: DownloadStatus) {
+        if (ids.isEmpty()) return
+        val current = _uiState.value.items
+        ids.forEach { activeHandles.remove(it)?.cancel() }
+        val now = DownloadsClock.nowEpochMs()
         publish(current.map { item ->
-            if (item.id in ids) item.copy(status = DownloadStatus.Paused, updatedAtEpochMs = DownloadsClock.nowEpochMs(), errorMessage = null) else item
+            if (item.id in ids) item.copy(status = status, updatedAtEpochMs = now, errorMessage = null) else item
         })
         persist()
-        advanceDownloadQueue()
     }
 
     /** Resumes paused episodes of [seriesId] and retries its failed ones. */
@@ -413,24 +407,19 @@ object DownloadsRepository {
         val toResume = ids.distinct().mapNotNull { itemsById[it] }.filter { it.isResumable }
         if (toResume.isEmpty()) return
 
-        val policy = DownloadQueuePolicy.current()
-        val running = current.filter { it.status == DownloadStatus.Downloading }.toMutableList()
         val now = DownloadsClock.nowEpochMs()
         val resetById = toResume.associate { item ->
-            val canStart = policy.canStart(item.showKey, running)
             val reset = item.copy(
-                status = if (canStart) DownloadStatus.Downloading else DownloadStatus.Queued,
+                status = DownloadStatus.Queued,
                 errorMessage = null,
                 localFileUri = null,
                 updatedAtEpochMs = now,
             )
-            if (canStart) running += reset
             item.id to reset
         }
 
         publish(current.map { resetById[it.id] ?: it })
         persist()
-        resetById.values.filter { it.status == DownloadStatus.Downloading }.forEach(::startDownload)
         advanceDownloadQueue()
     }
 
@@ -449,21 +438,28 @@ object DownloadsRepository {
     }
 
     fun cancelDownload(downloadId: String) {
+        cancelDownloads(listOf(downloadId))
+    }
+
+    fun cancelDownloads(downloadIds: Collection<String>) {
         ensureLoaded()
-        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
-        val wasDownloading = item.status == DownloadStatus.Downloading
-
-        activeHandles.remove(downloadId)?.cancel()
-        DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
-        DownloadsPlatformDownloader.removePartialFile(item.fileName)
-
-        val remainingItems = _uiState.value.items.filterNot { it.id == downloadId }
-        if (remainingItems.none { it.parentMetaId == item.parentMetaId }) {
-            offlineMetadata.remove(item.parentMetaId)
+        val ids = downloadIds.toSet()
+        val current = _uiState.value.items
+        val targets = current.filter { it.id in ids }
+        if (targets.isEmpty()) return
+        targets.forEach { item ->
+            activeHandles.remove(item.id)?.cancel()
+            val uri = DownloadsPlatformDownloader.resolveLocalFileUri(item.localFileUri, item.fileName) ?: item.localFileUri
+            DownloadsPlatformDownloader.removeFile(uri)
+            DownloadsPlatformDownloader.removePartialFile(item.fileName)
         }
+        val remainingItems = current.filterNot { it.id in ids }
+        targets.map { it.parentMetaId }.distinct().forEach { parentId ->
+            if (remainingItems.none { it.parentMetaId == parentId }) offlineMetadata.remove(parentId)
+        }
+        val wasDownloading = targets.any { it.status == DownloadStatus.Downloading }
         publish(remainingItems)
         persist()
-
         if (wasDownloading) {
             advanceDownloadQueue()
         }
@@ -602,8 +598,17 @@ object DownloadsRepository {
 
         if (changed) {
             publish(updated)
-            persist()
+            val item = updated.firstOrNull { it.id == downloadId }
+            if (item == null || item.status != DownloadStatus.Downloading || shouldPersistProgress(item)) persist()
         }
+    }
+
+    private fun shouldPersistProgress(item: DownloadItem): Boolean {
+        val now = DownloadsClock.nowEpochMs()
+        val previous = lastProgressPersistAt[item.id] ?: 0L
+        if (now - previous < PROGRESS_PERSIST_INTERVAL_MS) return false
+        lastProgressPersistAt[item.id] = now
+        return true
     }
 
     private fun replaceItem(item: DownloadItem) {
@@ -669,7 +674,7 @@ internal fun DownloadItem.hasPlayableLocalFile(): Boolean =
 @Serializable
 private data class StoredDownloadsPayload(
     val items: List<DownloadItem> = emptyList(),
-    val showMetadata: Map<String, StoredDownloadedShowMeta> = emptyMap(),
+    val showMetadata: Map<String, StoredOfflineMeta> = emptyMap(),
 )
 
 private object DownloadsCodec {
@@ -678,14 +683,20 @@ private object DownloadsCodec {
         encodeDefaults = true
     }
 
-    fun decodePayload(payload: String): StoredDownloadsPayload =
-        runCatching {
-            json.decodeFromString<StoredDownloadsPayload>(payload)
-        }.getOrDefault(StoredDownloadsPayload())
+    fun decodePayload(payload: String): StoredDownloadsPayload = runCatching {
+        val root = json.parseToJsonElement(payload) as? kotlinx.serialization.json.JsonObject
+            ?: return StoredDownloadsPayload()
+        val items = (root["items"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+            .mapNotNull { element -> runCatching { json.decodeFromJsonElement<DownloadItem>(element) }.getOrNull() }
+        val metadata = runCatching {
+            root["showMetadata"]?.let { json.decodeFromJsonElement<Map<String, StoredOfflineMeta>>(it) }.orEmpty()
+        }.getOrDefault(emptyMap())
+        StoredDownloadsPayload(items = items, showMetadata = metadata)
+    }.getOrDefault(StoredDownloadsPayload())
 
     fun encodePayload(
         items: Collection<DownloadItem>,
-        showMetadata: Map<String, StoredDownloadedShowMeta>,
+        showMetadata: Map<String, StoredOfflineMeta>,
     ): String =
         json.encodeToString(
             StoredDownloadsPayload(
@@ -694,6 +705,8 @@ private object DownloadsCodec {
             ),
         )
 }
+
+private const val PROGRESS_PERSIST_INTERVAL_MS = 5_000L
 
 private fun sanitizeRequestHeaders(headers: Map<String, String>?): Map<String, String> =
     headers

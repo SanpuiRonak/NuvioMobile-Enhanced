@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.withPermit
 
 enum class EpisodePlanStatus {
     AlreadyDownloaded,
+    AlreadyInProgress,
     Loading,
     Ready,
     NoSourceFound,
@@ -44,9 +45,9 @@ data class PlannedEpisodeItem(
     val sizeBytes: Long? = null,
 )
 
-sealed interface BatchModalStep {
-    data object EpisodeSelection : BatchModalStep
-    data class SourceSelection(val seasonIndex: Int) : BatchModalStep
+sealed interface BatchDialogStep {
+    data object EpisodeSelection : BatchDialogStep
+    data class SourceSelection(val seasonIndex: Int) : BatchDialogStep
 }
 
 data class PlannedSeasonEpisodes(
@@ -60,24 +61,19 @@ data class PlannedSeasonEpisodes(
 
 data class BatchDownloadPlan(
     val meta: MetaDetails,
-    /** The season the dialog opened on. */
-    val initialSeason: Int,
-    val availableSeasons: List<Int> = listOf(initialSeason),
+    val availableSeasons: List<Int> = emptyList(),
     val episodesBySeason: Map<Int, List<MetaVideo>> = emptyMap(),
     val selectedEpisodeKeys: Set<String> = emptySet(),
-    val step: BatchModalStep = BatchModalStep.EpisodeSelection,
+    val step: BatchDialogStep = BatchDialogStep.EpisodeSelection,
     /** Seasons with a selected episode, whose sources are picked one season per step. */
-    val seasonsToSource: List<Int> = listOf(initialSeason),
+    val seasonsToSource: List<Int> = availableSeasons,
     /** The season whose episodes the picker currently lists. */
-    val visibleSeason: Int = initialSeason,
+    val visibleSeason: Int = availableSeasons.firstOrNull() ?: 0,
     val seasonPlans: Map<Int, PlannedSeasonEpisodes> = emptyMap(),
     val isSingleTitle: Boolean = false,
 ) {
     val totalSelectedCount: Int
         get() = selectedEpisodeKeys.size
-
-    /** The season shown at source-selection step [index]. */
-    fun seasonToSourceAt(index: Int): Int = seasonsToSource[index]
 
     fun isSeasonSelected(season: Int): Boolean =
         episodesBySeason[season].orEmpty().any { it.batchKey(season) in selectedEpisodeKeys }
@@ -95,21 +91,41 @@ fun batchEpisodeKey(season: Int, episode: Int?): String = "${season}_${episode ?
 fun MetaVideo.batchKey(season: Int): String = batchEpisodeKey(season, episode)
 
 /** True when the content already has a download that is finished, running, paused or waiting. */
-private fun List<DownloadItem>.hasDownloadFor(logicalKey: String): Boolean =
-    any { it.logicalContentKey == logicalKey && it.status != DownloadStatus.Failed }
+private fun List<DownloadItem>.downloadFor(logicalKey: String): DownloadItem? =
+    firstOrNull { it.logicalContentKey == logicalKey && it.status != DownloadStatus.Failed }
 
 fun isBatchEpisodeDownloaded(
     currentDownloads: List<DownloadItem>,
     metaId: String,
     episode: MetaVideo,
     season: Int,
-): Boolean = currentDownloads.hasDownloadFor(
+): Boolean = currentDownloads.downloadFor(
     buildLogicalKey(
         parentMetaId = metaId,
         seasonNumber = episode.episode?.let { episode.season ?: season },
         episodeNumber = episode.episode,
     ),
-)
+).let { it?.status == DownloadStatus.Completed }
+
+fun isBatchEpisodeUnavailable(currentDownloads: List<DownloadItem>, metaId: String, episode: MetaVideo, season: Int): Boolean =
+    currentDownloads.downloadFor(buildLogicalKey(
+        parentMetaId = metaId,
+        seasonNumber = episode.episode?.let { episode.season ?: season },
+        episodeNumber = episode.episode,
+    )) != null
+
+private fun isBatchEpisodeInProgress(
+    currentDownloads: List<DownloadItem>,
+    metaId: String,
+    episode: MetaVideo,
+    season: Int,
+): Boolean = currentDownloads.downloadFor(
+    buildLogicalKey(
+        parentMetaId = metaId,
+        seasonNumber = episode.episode?.let { episode.season ?: season },
+        episodeNumber = episode.episode,
+    ),
+).let { it != null && it.status != DownloadStatus.Completed }
 
 /** Short quality label for a stream, e.g. "1080p" or "WEB-DL"; null when nothing is known. */
 internal fun DebridStreamFacts.qualityBadge(): String? =
@@ -130,14 +146,13 @@ internal fun MetaDetails.batchTargetFor(video: MetaVideo, planSeason: Int): Batc
         ?: return BatchEpisodeTarget(
             season = null,
             episode = null,
-            streamVideoId = video.id.takeIf { it.isNotBlank() && it != name } ?: id,
+            streamVideoId = video.id.takeIf { it.isNotBlank() } ?: id,
         )
     val season = video.season ?: planSeason
     val streamVideoId = video.id.takeIf { it.isNotBlank() } ?: buildPlaybackVideoId(
         parentMetaId = id,
         seasonNumber = season,
         episodeNumber = episode,
-        fallbackVideoId = video.id,
     )
     return BatchEpisodeTarget(season = season, episode = episode, streamVideoId = streamVideoId)
 }
@@ -190,10 +205,12 @@ object BatchDownloadCoordinator {
             val targetSeason = singleVideo.season ?: season
             _activePlan.value = BatchDownloadPlan(
                 meta = meta,
-                initialSeason = targetSeason,
+                availableSeasons = listOf(targetSeason),
                 episodesBySeason = mapOf(targetSeason to listOf(singleVideo)),
                 selectedEpisodeKeys = setOf(batchEpisodeKey(targetSeason, singleVideo.episode)),
-                step = BatchModalStep.SourceSelection(seasonIndex = 0),
+                step = BatchDialogStep.SourceSelection(seasonIndex = 0),
+                seasonsToSource = listOf(targetSeason),
+                visibleSeason = targetSeason,
                 isSingleTitle = true,
             )
             loadSourcesForSeason(targetSeason)
@@ -216,7 +233,6 @@ object BatchDownloadCoordinator {
 
         _activePlan.value = BatchDownloadPlan(
             meta = meta,
-            initialSeason = season,
             availableSeasons = allSeasonNumbers,
             episodesBySeason = episodesBySeason,
             seasonsToSource = allSeasonNumbers,
@@ -247,12 +263,10 @@ object BatchDownloadCoordinator {
 
     fun selectUnwatchedForSeason(
         season: Int,
-        isEpisodeWatched: (MetaVideo) -> Boolean = { false },
+        isEpisodeWatched: (MetaVideo) -> Boolean,
     ) {
-        _activePlan.value?.let { plan ->
-            updateSeasonSelection(season) { episode, isDownloaded ->
-                !isDownloaded && !isEpisodeWatched(episode)
-            }
+        updateSeasonSelection(season) { episode, isUnavailable ->
+            !isUnavailable && !isEpisodeWatched(episode)
         }
     }
 
@@ -272,8 +286,8 @@ object BatchDownloadCoordinator {
             val keys = current.selectedEpisodeKeys.toMutableSet()
             for (episode in current.episodesBySeason[season].orEmpty()) {
                 val key = batchEpisodeKey(season, episode.episode ?: continue)
-                val isDownloaded = isBatchEpisodeDownloaded(currentDownloads, current.meta.id, episode, season)
-                if (shouldSelect(episode, isDownloaded)) keys += key else keys -= key
+                val unavailable = isBatchEpisodeUnavailable(currentDownloads, current.meta.id, episode, season)
+                if (shouldSelect(episode, unavailable)) keys += key else keys -= key
             }
             current.copy(selectedEpisodeKeys = keys)
         }
@@ -287,7 +301,7 @@ object BatchDownloadCoordinator {
         _activePlan.update {
             it?.copy(
                 seasonsToSource = seasonsToSource,
-                step = BatchModalStep.SourceSelection(seasonIndex = 0),
+                step = BatchDialogStep.SourceSelection(seasonIndex = 0),
             )
         }
         loadSourcesForSeason(seasonsToSource.first())
@@ -322,9 +336,11 @@ object BatchDownloadCoordinator {
         plan.isSingleTitle || episode.batchKey(season) in plan.selectedEpisodeKeys
     }.map { episode ->
             val isDownloaded = isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, episode, season)
+            val inProgress = isBatchEpisodeInProgress(currentDownloads, plan.meta.id, episode, season)
             val previous = previousItems[episode]
             when {
                 isDownloaded -> PlannedEpisodeItem(episode, EpisodePlanStatus.AlreadyDownloaded)
+                inProgress -> PlannedEpisodeItem(episode, EpisodePlanStatus.AlreadyInProgress)
                 previous != null -> previous
                 else -> PlannedEpisodeItem(episode, EpisodePlanStatus.Loading)
             }
@@ -375,13 +391,15 @@ object BatchDownloadCoordinator {
     fun overrideEpisodeStream(season: Int, episode: MetaVideo, stream: StreamItem) {
         val plan = _activePlan.value ?: return
         val facts = DebridStreamMetadata.facts(stream, DebridStreamPreferences())
-        updateEpisode(plan.meta.id, season, episode) { it.withSelectedStream(stream, facts) }
+        updateEpisode(plan.meta.id, season, episode) {
+            it.withSelectedStream(stream, facts, StreamSourcePrefillSelector.sizeBytes(stream))
+        }
     }
 
     private fun PlannedEpisodeItem.withSelectedStream(stream: StreamItem, facts: DebridStreamFacts, sizeBytes: Long? = null) = copy(
         streamCandidate = stream,
         resolutionLabel = facts.qualityBadge(),
-        sizeBytes = sizeBytes ?: facts.size?.takeIf { it > 0 },
+        sizeBytes = sizeBytes ?: StreamSourcePrefillSelector.sizeBytes(stream),
         status = EpisodePlanStatus.Ready,
     )
 
@@ -417,13 +435,13 @@ object BatchDownloadCoordinator {
     fun goToSeasonIndex(index: Int) {
         val plan = _activePlan.value ?: return
         if (index !in plan.seasonsToSource.indices) return
-        val season = plan.seasonToSourceAt(index)
-        _activePlan.update { it?.copy(step = BatchModalStep.SourceSelection(seasonIndex = index)) }
+        val season = plan.seasonsToSource[index]
+        _activePlan.update { it?.copy(step = BatchDialogStep.SourceSelection(seasonIndex = index)) }
         loadSourcesForSeason(season)
     }
 
     fun goToEpisodeSelection() {
-        _activePlan.update { it?.copy(step = BatchModalStep.EpisodeSelection) }
+        _activePlan.update { it?.copy(step = BatchDialogStep.EpisodeSelection) }
     }
 
     /** Closes the dialog and queues every planned episode that has a source. */

@@ -3122,6 +3122,7 @@
     <string name="season_download_already_downloaded">Already downloaded</string>
     <string name="season_download_no_source_found">No stream found</string>
     <string name="downloads_status_queued">Queued</string>
+    <string name="downloads_status_already_in_progress">Download already active or queued</string>
     <string name="downloads_badge_paused">Paused</string>
     <string name="downloads_summary_downloading">%1$d downloading</string>
     <string name="downloads_summary_queued">%1$d queued</string>
