@@ -54,6 +54,7 @@ internal fun PosterGridRow(
     fullyWatchedSeriesKeys: Set<String> = emptySet(),
     onPosterClick: ((MetaPreview) -> Unit)? = null,
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
+    cellOverride: (@Composable (index: Int, modifier: Modifier) -> Boolean)? = null,
 ) {
     val posterCardStyle = rememberPosterCardStyleUiState()
 
@@ -62,12 +63,14 @@ internal fun PosterGridRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        items.forEach { item ->
-            PosterGridTile(
+        items.forEachIndexed { index, item ->
+            val cellModifier = Modifier.weight(1f)
+            val overridden = cellOverride?.invoke(index, cellModifier) == true
+            if (!overridden) PosterGridTile(
                 item = item,
                 cornerRadiusDp = posterCardStyle.cornerRadiusDp,
                 hideLabels = posterCardStyle.hideLabelsEnabled,
-                modifier = Modifier.weight(1f),
+                modifier = cellModifier,
                 isWatched = WatchingState.isPosterWatched(
                     watchedKeys = watchedKeys,
                     item = item,
@@ -106,7 +109,7 @@ internal fun PosterGridSkeletonRow(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun PosterGridTile(
+private fun PosterGridTile(
     item: MetaPreview,
     cornerRadiusDp: Int,
     hideLabels: Boolean,

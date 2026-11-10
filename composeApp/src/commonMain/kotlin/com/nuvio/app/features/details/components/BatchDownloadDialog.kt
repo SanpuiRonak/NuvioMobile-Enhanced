@@ -212,7 +212,7 @@ private fun EpisodeSelectionDialog(
                     val key = episode.batchKey(plan.visibleSeason)
                     val isChecked = key in plan.selectedEpisodeKeys
                     val downloaded = isDownloaded(episode, plan.visibleSeason)
-                    val watched = plan.isEpisodeWatched(episode, plan.visibleSeason, isEpisodeWatched)
+                    val watched = isEpisodeWatched(episode)
 
                     Surface(
                         modifier = Modifier

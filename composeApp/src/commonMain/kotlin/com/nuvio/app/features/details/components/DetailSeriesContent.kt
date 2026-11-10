@@ -110,6 +110,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.glass.ambientLiquidGlass
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
 import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.seasonLabel
 import com.nuvio.app.features.downloads.EpisodeDownloadIndex
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadsRepository
@@ -133,14 +134,15 @@ fun DetailSeriesContent(
     episodeCardStyle: MetaEpisodeCardStyle = MetaEpisodeCardStyle.Horizontal,
     progressByVideoId: Map<String, WatchProgressEntry> = emptyMap(),
     watchedKeys: Set<String> = emptySet(),
+    episodeDownloadFor: (MetaVideo) -> DownloadItem?,
     episodeRatings: Map<Pair<Int, Int>, Double> = emptyMap(),
     episodeRatingsVisibility: EpisodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL,
     blurUnwatchedEpisodes: Boolean = false,
     onEpisodeClick: ((MetaVideo) -> Unit)? = null,
     onEpisodeLongPress: ((MetaVideo) -> Unit)? = null,
     onSeasonLongPress: ((Int) -> Unit)? = null,
-    selectedSeason: Int? = null,
-    onSeasonSelected: ((Int) -> Unit)? = null,
+    selectedSeason: Int?,
+    onSeasonSelected: (Int) -> Unit,
 ) {
     val hasVideos = meta.videos.isNotEmpty()
     if (meta.type != "series" && !hasVideos) return
@@ -200,7 +202,6 @@ fun DetailSeriesContent(
         ?.takeIf { it in groupedEpisodes }
         ?: defaultSeason
 
-    val episodeDownloadFor = rememberEpisodeDownloadLookup(meta.id)
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val sizing = seriesContentSizing(maxWidth.value)
@@ -217,7 +218,7 @@ fun DetailSeriesContent(
                 sizing = sizing,
                 horizontalScrollPadding = horizontalScrollPadding,
                 onSelect = {
-                    onSeasonSelected?.invoke(it)
+                    onSeasonSelected(it)
                 },
                 onLongPress = onSeasonLongPress,
             )
@@ -243,7 +244,7 @@ fun DetailSeriesContent(
                             title = if (meta.type != "series" && seasonForContent <= 0) {
                                 stringResource(Res.string.details_videos)
                             } else {
-                                seasonForContent.label()
+                                seasonLabel(seasonForContent)
                             },
                         )
                     }
@@ -423,7 +424,7 @@ internal fun DetailSeriesListHeader(
                     title = if (meta.type != "series" && currentSeason <= 0) {
                         stringResource(Res.string.details_videos)
                     } else {
-                        currentSeason.label()
+                        seasonLabel(currentSeason)
                     },
                 )
             }
@@ -505,7 +506,7 @@ internal fun MetaDetails.isEpisodeWatchedForNavigator(
 
 @Composable
 internal fun seasonDisplayLabel(meta: MetaDetails, season: Int): String =
-    if (meta.type != "series" && season <= 0) stringResource(Res.string.details_videos) else season.label()
+    if (meta.type != "series" && season <= 0) stringResource(Res.string.details_videos) else seasonLabel(season)
 
 @Composable
 private fun SeriesSeasonSelector(
@@ -700,7 +701,7 @@ private fun SeasonTextChipScrollRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = season.label(),
+                    text = seasonLabel(season),
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = sizing.seasonChipTextSize,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
@@ -752,7 +753,7 @@ private fun SeasonPosterScrollRow(
     ) {
         items(seasons, key = { season -> season }) { season ->
             SeasonPosterButton(
-                label = season.label(),
+                label = seasonLabel(season),
                 imageUrl = resolveSeasonPoster(
                     season = season,
                     groupedEpisodes = groupedEpisodes,
@@ -1864,13 +1865,6 @@ private fun seriesContentSizing(maxWidthDp: Float): SeriesContentSizing =
             badgeHorizontalPadding = 6.dp,
             badgeVerticalPadding = 2.dp,
         )
-    }
-
-private fun Int.label(): String =
-    if (this <= 0) {
-        runBlocking { getString(Res.string.episodes_specials) }
-    } else {
-        runBlocking { getString(Res.string.episodes_season, this@label) }
     }
 
 private fun MetaVideo.episodeBadge(): String =

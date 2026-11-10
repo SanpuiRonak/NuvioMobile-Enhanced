@@ -56,13 +56,13 @@ object DownloadsRepository {
             DownloadsSettingsRepository.concurrencyLimits,
             DownloadsSettingsRepository.allowMobileDataDownloads,
             NetworkStatusRepository.uiState,
-        ) { limits, allowMobile, networkState ->
+        ) { limits, allowMobile, _ ->
             limits to (allowMobile || DownloadNetworkGuard.isOnWifi())
         }
             .distinctUntilChanged()
-            .onEach {
+            .onEach { (_, networkAllowed) ->
                 if (!hasLoaded) return@onEach
-                if (!isDownloadNetworkAllowed()) {
+                if (!networkAllowed) {
                     val running = _uiState.value.items.filter { it.status == DownloadStatus.Downloading }
                     if (running.isNotEmpty()) {
                         running.forEach { activeHandles.remove(it.id)?.cancel() }
@@ -114,17 +114,6 @@ object DownloadsRepository {
         val hasDownloads = _uiState.value.items.any { it.parentMetaId == meta.id }
         if (!hasDownloads && offlineMetadata[meta.id] == null) return
         if (offlineMetadata.merge(meta)) persist()
-    }
-
-    fun findEpisodeDownload(
-        parentMetaId: String,
-        seasonNumber: Int?,
-        episodeNumber: Int?,
-        videoId: String? = null,
-    ): DownloadItem? {
-        ensureLoaded()
-        return EpisodeDownloadIndex.build(_uiState.value.items, parentMetaId)
-            .find(seasonNumber, episodeNumber, videoId)
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -378,10 +367,7 @@ object DownloadsRepository {
         pauseActiveDownloadsMatching { it.parentMetaId == seriesId }
     }
 
-    /**
-     * Pauses queued items before running ones, so pausing a running download cannot
-     * promote a queued item that is about to be paused as well.
-     */
+    /** Pauses every matching active item in one update before advancing the queue. */
     private fun pauseActiveDownloadsMatching(predicate: (DownloadItem) -> Boolean) {
         ensureLoaded()
         val current = _uiState.value.items
@@ -446,10 +432,6 @@ object DownloadsRepository {
         persist()
         resetById.values.filter { it.status == DownloadStatus.Downloading }.forEach(::startDownload)
         advanceDownloadQueue()
-    }
-
-    fun retryDownload(downloadId: String) {
-        resumeDownload(downloadId)
     }
 
     fun pauseDownloads(downloadIds: Collection<String>) {

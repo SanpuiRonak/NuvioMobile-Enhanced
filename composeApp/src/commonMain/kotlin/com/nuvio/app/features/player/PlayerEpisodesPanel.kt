@@ -65,6 +65,7 @@ import nuvio.composeapp.generated.resources.compose_player_panel_streams
 import nuvio.composeapp.generated.resources.compose_player_playing
 import nuvio.composeapp.generated.resources.episodes_season
 import nuvio.composeapp.generated.resources.episodes_specials
+import com.nuvio.app.features.downloads.seasonLabel
 import nuvio.composeapp.generated.resources.party_shared_by
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.core.i18n.localizedEpisodeTitle
@@ -227,11 +228,7 @@ private fun EpisodesListPanelContent(
             ) {
                 items(availableSeasons, key = { it }) { season ->
                     EpisodeSeasonChip(
-                        label = if (season == 0) {
-                            stringResource(Res.string.episodes_specials)
-                        } else {
-                            stringResource(Res.string.episodes_season, season)
-                        },
+                        label = seasonLabel(season),
                         isSelected = selectedSeason == season,
                         onClick = {
                             selectedSeason = season

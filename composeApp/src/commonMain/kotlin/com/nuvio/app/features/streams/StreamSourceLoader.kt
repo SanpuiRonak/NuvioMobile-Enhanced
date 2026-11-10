@@ -278,12 +278,7 @@ internal object StreamSourceLoader {
         fun present(group: AddonStreamGroup) = presentStreamGroup(group, streamBadgeRules, debridSettings)
 
         if (embeddedStreams.isNotEmpty()) {
-            val group = AddonStreamGroup(
-                addonName = embeddedStreams.first().addonName,
-                addonId = "embedded",
-                streams = embeddedStreams,
-                isLoading = false,
-            )
+            val group = embeddedStreamGroup(embeddedStreams)
             return present(group).streams
         }
 

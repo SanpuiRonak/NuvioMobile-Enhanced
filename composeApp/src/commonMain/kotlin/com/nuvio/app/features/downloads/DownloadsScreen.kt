@@ -199,7 +199,7 @@ private fun LazyListScope.downloadsRootContent(
 
     if (activeItems.isNotEmpty()) {
         item {
-            val hasDownloading = activeItems.any { it.status == DownloadStatus.Downloading }
+            val hasDownloading = activeItems.statusCounts().hasActive
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

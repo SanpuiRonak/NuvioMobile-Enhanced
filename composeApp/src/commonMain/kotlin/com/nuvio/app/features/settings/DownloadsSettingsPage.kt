@@ -48,7 +48,7 @@ internal fun LazyListScope.downloadsSettingsContent(
             SettingsGroup(isTablet = isTablet) {
                 SettingsNavigationRow(
                     title = stringResource(Res.string.downloads_preferred_resolution_title),
-                    description = preferredResolution.label,
+                    description = stringResource(preferredResolution.label),
                     isTablet = isTablet,
                     onClick = { showResolutionDialog = true },
                 )
@@ -103,7 +103,7 @@ internal fun LazyListScope.downloadsSettingsContent(
                 title = stringResource(Res.string.downloads_preferred_resolution_title),
                 options = DownloadPreferredResolution.entries,
                 selected = preferredResolution,
-                label = { it.label },
+                label = { stringResource(it.label) },
                 onSelect = {
                     DownloadsSettingsRepository.setPreferredResolution(it)
                     showResolutionDialog = false

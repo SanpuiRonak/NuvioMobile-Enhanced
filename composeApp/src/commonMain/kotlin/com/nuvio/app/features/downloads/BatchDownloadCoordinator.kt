@@ -11,6 +11,7 @@ import com.nuvio.app.features.details.seasonSortKey
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamSourceLoader
 import com.nuvio.app.features.streams.StreamSourcePrefillSelector
+import com.nuvio.app.features.streams.runCatchingUnlessCancelled
 import com.nuvio.app.features.watched.releasedEpisodesForSeason
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
@@ -64,7 +65,6 @@ data class BatchDownloadPlan(
     val availableSeasons: List<Int> = listOf(initialSeason),
     val episodesBySeason: Map<Int, List<MetaVideo>> = emptyMap(),
     val selectedEpisodeKeys: Set<String> = emptySet(),
-    val watchedEpisodeKeys: Set<String> = emptySet(),
     val step: BatchModalStep = BatchModalStep.EpisodeSelection,
     /** Seasons with a selected episode, whose sources are picked one season per step. */
     val seasonsToSource: List<Int> = listOf(initialSeason),
@@ -82,13 +82,6 @@ data class BatchDownloadPlan(
     fun isSeasonSelected(season: Int): Boolean =
         episodesBySeason[season].orEmpty().any { it.batchKey(season) in selectedEpisodeKeys }
 
-    fun isEpisodeWatched(
-        episode: MetaVideo,
-        season: Int,
-        isEpisodeWatched: (MetaVideo) -> Boolean,
-    ): Boolean = isEpisodeWatched(episode) ||
-        "${meta.id}:$season:${episode.episode}" in watchedEpisodeKeys ||
-        episode.id in watchedEpisodeKeys
 }
 
 /** Result of [BatchDownloadCoordinator.queuePlan]. */
@@ -176,7 +169,6 @@ object BatchDownloadCoordinator {
     fun openPlan(
         meta: MetaDetails,
         season: Int = 1,
-        watchedKeys: Set<String> = emptySet(),
     ) {
         closePlan()
         planJob = SupervisorJob(scope.coroutineContext[Job])
@@ -201,7 +193,6 @@ object BatchDownloadCoordinator {
                 initialSeason = targetSeason,
                 episodesBySeason = mapOf(targetSeason to listOf(singleVideo)),
                 selectedEpisodeKeys = setOf(batchEpisodeKey(targetSeason, singleVideo.episode)),
-                watchedEpisodeKeys = watchedKeys,
                 step = BatchModalStep.SourceSelection(seasonIndex = 0),
                 isSingleTitle = true,
             )
@@ -228,7 +219,6 @@ object BatchDownloadCoordinator {
             initialSeason = season,
             availableSeasons = allSeasonNumbers,
             episodesBySeason = episodesBySeason,
-            watchedEpisodeKeys = watchedKeys,
             seasonsToSource = allSeasonNumbers,
             visibleSeason = if (season in allSeasonNumbers) season else allSeasonNumbers.first(),
         )
@@ -261,7 +251,7 @@ object BatchDownloadCoordinator {
     ) {
         _activePlan.value?.let { plan ->
             updateSeasonSelection(season) { episode, isDownloaded ->
-                !isDownloaded && !plan.isEpisodeWatched(episode, season, isEpisodeWatched)
+                !isDownloaded && !isEpisodeWatched(episode)
             }
         }
     }
@@ -309,15 +299,28 @@ object BatchDownloadCoordinator {
         val existingPlan = plan.seasonPlans[season]
         if (existingPlan?.isPlanning == true) return
 
-        val selectedEpisodes = plan.episodesBySeason[season].orEmpty().filter { episode ->
-            plan.isSingleTitle || episode.batchKey(season) in plan.selectedEpisodeKeys
-        }
-        if (selectedEpisodes.isEmpty()) return
-
         DownloadsRepository.ensureLoaded()
         val currentDownloads = DownloadsRepository.uiState.value.items
         val previousItems = existingPlan?.episodes.orEmpty().associateBy { it.episode }
-        val initialItems = selectedEpisodes.map { episode ->
+        val initialItems = buildInitialPlannedItems(plan, season, currentDownloads, previousItems)
+        if (initialItems.isEmpty()) return
+        val episodesToLoad = initialItems.filter { it.status == EpisodePlanStatus.Loading }.map { it.episode }
+        updateSeasonPlan(plan.meta.id, season) {
+            PlannedSeasonEpisodes(season = season, episodes = initialItems, isPlanning = episodesToLoad.isNotEmpty())
+        }
+        if (episodesToLoad.isEmpty()) return
+
+        launchSourceLoading(plan, parentJob, season, episodesToLoad)
+    }
+
+    private fun buildInitialPlannedItems(
+        plan: BatchDownloadPlan,
+        season: Int,
+        currentDownloads: List<DownloadItem>,
+        previousItems: Map<MetaVideo, PlannedEpisodeItem>,
+    ): List<PlannedEpisodeItem> = plan.episodesBySeason[season].orEmpty().filter { episode ->
+        plan.isSingleTitle || episode.batchKey(season) in plan.selectedEpisodeKeys
+    }.map { episode ->
             val isDownloaded = isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, episode, season)
             val previous = previousItems[episode]
             when {
@@ -326,19 +329,20 @@ object BatchDownloadCoordinator {
                 else -> PlannedEpisodeItem(episode, EpisodePlanStatus.Loading)
             }
         }
-        val episodesToLoad = initialItems.filter { it.status == EpisodePlanStatus.Loading }.map { it.episode }
-        updateSeasonPlan(plan.meta.id, season) {
-            PlannedSeasonEpisodes(season = season, episodes = initialItems, isPlanning = episodesToLoad.isNotEmpty())
-        }
-        if (episodesToLoad.isEmpty()) return
 
+    private fun launchSourceLoading(
+        plan: BatchDownloadPlan,
+        parentJob: Job,
+        season: Int,
+        episodesToLoad: List<MetaVideo>,
+    ) {
         scope.launch(parentJob) {
             val preferredResolution = DownloadsSettingsRepository.preferredResolution.value
             episodesToLoad.map { episode ->
                 launch(Dispatchers.Default) {
                     sourceLoadPermits.withPermit {
                         val target = plan.meta.batchTargetFor(episode, season)
-                        val streams = runCatching {
+                        val streams = runCatchingUnlessCancelled {
                             StreamSourceLoader.loadStreams(
                                 type = plan.meta.type,
                                 videoId = target.streamVideoId,
@@ -363,6 +367,7 @@ object BatchDownloadCoordinator {
                 }
             }.joinAll()
             updateSeasonPlan(plan.meta.id, season) { it?.copy(isPlanning = false) }
+            // Re-run to include episodes selected while the source requests were in flight.
             loadSourcesForSeason(season)
         }
     }

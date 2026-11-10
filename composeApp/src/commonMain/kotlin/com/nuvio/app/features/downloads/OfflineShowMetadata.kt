@@ -5,6 +5,14 @@ import com.nuvio.app.features.details.MetaPerson
 import com.nuvio.app.features.details.MetaVideo
 import kotlinx.serialization.Serializable
 
+private const val MAX_STORED_VIDEOS = 2_000
+private const val MAX_STORED_CAST = 50
+private const val MAX_STORED_DESCRIPTION_LENGTH = 4_000
+private const val MAX_STORED_TITLE_LENGTH = 500
+
+private fun String?.boundedDescription(): String? = this?.take(MAX_STORED_DESCRIPTION_LENGTH)
+private fun String.boundedTitle(): String = take(MAX_STORED_TITLE_LENGTH)
+
 @Serializable
 data class StoredDownloadedVideoMeta(
     val id: String,
@@ -74,19 +82,19 @@ internal class OfflineShowMetadataStore {
         val existing = byShowId[meta.id]
         val updated = StoredDownloadedShowMeta(
             showId = meta.id,
-            title = meta.name,
+            title = meta.name.boundedTitle(),
             type = meta.type,
             poster = meta.poster ?: existing?.poster,
             background = meta.background ?: existing?.background,
             logo = meta.logo ?: existing?.logo,
-            description = meta.description ?: existing?.description,
+            description = (meta.description ?: existing?.description).boundedDescription(),
             releaseInfo = meta.releaseInfo ?: existing?.releaseInfo,
             status = meta.status ?: existing?.status,
             imdbRating = meta.imdbRating ?: existing?.imdbRating,
             genres = meta.genres.ifEmpty { existing?.genres.orEmpty() },
             seasonPosters = existing?.seasonPosters.orEmpty() + meta.seasonPosters,
-            videos = meta.videos.map { it.toStored() }.ifEmpty { existing?.videos.orEmpty() },
-            cast = meta.cast.map { it.toStored() }.ifEmpty { existing?.cast.orEmpty() },
+            videos = (meta.videos.map { it.toStored() }.ifEmpty { existing?.videos.orEmpty() }).take(MAX_STORED_VIDEOS),
+            cast = (meta.cast.map { it.toStored() }.ifEmpty { existing?.cast.orEmpty() }).take(MAX_STORED_CAST),
         )
         if (updated == existing) return false
         byShowId[meta.id] = updated
@@ -103,14 +111,18 @@ internal class OfflineShowMetadataStore {
         background: String?,
         episode: StoredDownloadedVideoMeta?,
     ) {
-        val existing = byShowId[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title, type = type)
+        val existing = byShowId[showId] ?: StoredDownloadedShowMeta(showId = showId, title = title.boundedTitle(), type = type)
         val isNewEpisode = episode != null &&
             existing.videos.none { it.season == episode.season && it.episode == episode.episode }
         byShowId[showId] = existing.copy(
+            title = existing.title.boundedTitle(),
             logo = existing.logo ?: logo,
             poster = existing.poster ?: poster,
             background = existing.background ?: background,
-            videos = if (isNewEpisode) existing.videos + listOfNotNull(episode) else existing.videos,
+            videos = (if (isNewEpisode) existing.videos + listOfNotNull(episode?.copy(
+                title = episode.title.boundedTitle(),
+                overview = episode.overview.boundedDescription(),
+            )) else existing.videos).take(MAX_STORED_VIDEOS),
         )
     }
 }
@@ -129,13 +141,13 @@ fun DownloadItem.toMetaVideo(): MetaVideo =
 fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
     StoredDownloadedVideoMeta(
         id = id,
-        title = title,
+        title = title.boundedTitle(),
         released = released,
         thumbnail = thumbnail,
         seasonPoster = seasonPoster,
         season = season,
         episode = episode,
-        overview = overview,
+        overview = overview.boundedDescription(),
         runtime = runtime,
         tmdbRating = tmdbRating,
         imdbRating = imdbRating,
@@ -145,14 +157,14 @@ fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
 fun StoredDownloadedVideoMeta.toMetaVideo(): MetaVideo =
     MetaVideo(
         id = id,
-        title = title,
+        title = title.boundedTitle(),
         released = released,
         available = true,
         thumbnail = thumbnail,
         seasonPoster = seasonPoster,
         season = season,
         episode = episode,
-        overview = overview,
+        overview = overview.boundedDescription(),
         runtime = runtime,
         tmdbRating = tmdbRating,
         imdbRating = imdbRating,
@@ -161,7 +173,7 @@ fun StoredDownloadedVideoMeta.toMetaVideo(): MetaVideo =
 
 fun MetaPerson.toStored(): StoredDownloadedCastMeta =
     StoredDownloadedCastMeta(
-        name = name,
+        name = name.boundedTitle(),
         role = role,
         photo = photo,
         tmdbId = tmdbId,

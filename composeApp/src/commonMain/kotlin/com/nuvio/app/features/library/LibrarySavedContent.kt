@@ -4,7 +4,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyItemScope
@@ -13,19 +12,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.i18n.localizedMediaTypeLabel
 import com.nuvio.app.core.poster.withCustomPosterUrl
 import com.nuvio.app.core.ui.NuvioDropdownChip
 import com.nuvio.app.core.ui.NuvioDropdownOption
-import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.components.PosterGridRow
 import com.nuvio.app.features.home.components.PosterGridSkeletonRow
-import com.nuvio.app.features.home.components.PosterGridTile
-import com.nuvio.app.features.watching.application.WatchingState
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.library_filter_all_types
 import nuvio.composeapp.generated.resources.library_filter_list
@@ -134,73 +129,38 @@ internal fun LazyListScope.libraryVerticalContent(
         // Not remembered: whether a row has an active download changes as downloads progress,
         // while the row's entries stay the same.
         val activeDownloads = rowEntries.map { activeDownloadItemFor?.invoke(it.item) }
-        if (activeDownloads.any { it != null }) {
-            Row(
-                modifier = libraryContentTransitionModifier()
-                    .padding(horizontal = 16.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                rowEntries.forEachIndexed { index, entry ->
-                    val item = entry.item
-                    val activeDownload = activeDownloads[index]
-                    if (activeDownload != null) {
-                        ActiveDownloadPosterCard(
-                            item = activeDownload,
-                            posterPattern = posterPattern,
-                            onClick = { onPosterClick?.invoke(item) },
-                            onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(activeDownload) } },
-                            modifier = Modifier.weight(1f),
-                            fillMaxWidth = true,
-                        )
-                    } else {
-                        val posterCardStyle = rememberPosterCardStyleUiState()
-                        val preview = remember(item, posterPattern, releaseInfoFor) {
-                            item.toPosterPreview(releaseInfoFor, posterPattern)
-                        }
-                        PosterGridTile(
-                            item = preview,
-                            cornerRadiusDp = posterCardStyle.cornerRadiusDp,
-                            hideLabels = posterCardStyle.hideLabelsEnabled,
-                            modifier = Modifier.weight(1f),
-                            isWatched = WatchingState.isPosterWatched(
-                                watchedKeys = watchedKeys,
-                                item = preview,
-                                fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
-                            ),
-                            onClick = onPosterClick?.let { { it(item) } },
-                            onLongClick = onPosterLongClick?.let { { it(item, entry.section) } },
-                        )
-                    }
-                }
-                repeat(columns - rowEntries.size) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
+        val resolvedItems = remember(rowEntries, posterPattern, releaseInfoFor) {
+            rowEntries.map { entry ->
+                entry.item.toPosterPreview(releaseInfoFor, posterPattern)
             }
-        } else {
-            val resolvedItems = remember(rowEntries, posterPattern, releaseInfoFor) {
-                rowEntries.map { entry ->
-                    entry.item.toPosterPreview(releaseInfoFor, posterPattern)
-                }
-            }
-            PosterGridRow(
-                items = resolvedItems,
-                columns = columns,
-                modifier = libraryContentTransitionModifier()
-                    .padding(horizontal = 16.dp),
-                watchedKeys = watchedKeys,
-                fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
-                onPosterClick = onPosterClick?.let { callback ->
-                    { preview -> rowEntries.findEntry(preview)?.item?.let(callback) }
-                },
-                onPosterLongClick = onPosterLongClick?.let { callback ->
-                    { preview ->
-                        rowEntries.findEntry(preview)?.let { entry -> callback(entry.item, entry.section) }
-                    }
-                },
-            )
         }
+        PosterGridRow(
+            items = resolvedItems,
+            columns = columns,
+            modifier = libraryContentTransitionModifier().padding(horizontal = 16.dp),
+            watchedKeys = watchedKeys,
+            fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+            onPosterClick = onPosterClick?.let { callback ->
+                { preview -> rowEntries.findEntry(preview)?.item?.let(callback) }
+            },
+            onPosterLongClick = onPosterLongClick?.let { callback ->
+                { preview -> rowEntries.findEntry(preview)?.let { entry -> callback(entry.item, entry.section) } }
+            },
+            cellOverride = { index, cellModifier ->
+                val activeDownload = activeDownloads[index]
+                if (activeDownload == null) false else {
+                    ActiveDownloadPosterCard(
+                        item = activeDownload,
+                        posterPattern = posterPattern,
+                        onClick = { onPosterClick?.invoke(rowEntries[index].item) },
+                        onTogglePause = onActiveDownloadTogglePause?.let { callback -> { callback(activeDownload) } },
+                        modifier = cellModifier,
+                        fillMaxWidth = true,
+                    )
+                    true
+                }
+            },
+        )
     }
 }
 

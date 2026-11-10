@@ -135,6 +135,7 @@ import com.nuvio.app.features.details.components.detailEpisodeListItems
 import com.nuvio.app.features.details.components.rememberEpisodeNavigatorState
 import com.nuvio.app.features.details.components.rememberEpisodeDownloadLookup
 import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.seasonLabel
 import com.nuvio.app.features.details.components.DetailTrailersSection
 import com.nuvio.app.features.details.components.EpisodeWatchedActionSheet
 import com.nuvio.app.features.details.components.SeasonWatchedActionSheet
@@ -665,7 +666,6 @@ fun MetaDetailsScreen(
                             watchedItems = watchedUiState.items,
                             todayIsoDate = todayIsoDate,
                             preferFurthestEpisode = cwPrefs.upNextFromFurthestEpisode,
-                            watchedKeys = watchedUiState.watchedKeys,
                             allowRewatch = true,
                         )
                     }
@@ -956,7 +956,6 @@ fun MetaDetailsScreen(
                         BatchDownloadCoordinator.openPlan(
                             meta = meta,
                             season = targetSeason,
-                            watchedKeys = watchedUiState.watchedKeys,
                         )
                     }
                 } else {
@@ -1552,9 +1551,7 @@ fun MetaDetailsScreen(
                             val episodeUserRating = rememberUserRating(episodeRatingTarget)
                             EpisodeWatchedActionSheet(
                                 episode = selectedEpisode,
-                                seasonLabel = selectedEpisode.season?.let {
-                                    stringResource(Res.string.episodes_season, it)
-                                } ?: stringResource(Res.string.episodes_specials),
+                                seasonLabel = selectedEpisode.season?.let { seasonLabel(it) } ?: seasonLabel(0),
                                 isEpisodeWatched = isSelectedEpisodeWatched,
                                 canMarkPreviousEpisodes = previousEpisodes.isNotEmpty(),
                                 arePreviousEpisodesWatched = arePreviousEpisodesWatched,
@@ -1900,9 +1897,7 @@ fun MetaDetailsScreen(
                     progressByVideoId = progressByVideoId,
                 )
             }
-            val seasonLabel = selectedEpisode.season?.let {
-                stringResource(Res.string.episodes_season, it)
-            } ?: stringResource(Res.string.episodes_specials)
+            val seasonLabel = selectedEpisode.season?.let { seasonLabel(it) } ?: seasonLabel(0)
             val zoomEpisodeRatingTarget = remember(meta, selectedEpisode) {
                 meta.episodeUserRatingTarget(selectedEpisode)
             }
@@ -2101,11 +2096,7 @@ private const val RATING_SHEET_OPEN_DELAY_MS = 350L
 
 @Composable
 private fun selectedSeasonLabel(season: Int): String =
-    if (season == 0) {
-        stringResource(Res.string.episodes_specials)
-    } else {
-        stringResource(Res.string.episodes_season, season)
-    }
+    seasonLabel(season)
 
 private fun isEpisodeWatchedForActions(
     meta: MetaDetails,
@@ -2217,8 +2208,8 @@ private fun LazyListScope.configuredMetaSectionItems(
     listState: LazyListState? = null,
     leadingItemCount: Int = 0,
     stickyBackground: Color = Color.Unspecified,
-    selectedSeason: Int? = null,
-    onSeasonSelected: ((Int) -> Unit)? = null,
+    selectedSeason: Int?,
+    onSeasonSelected: (Int) -> Unit,
 ) {
     val enabledItems = settings.items.filter { it.enabled }
     var emittedItemCount = 0
@@ -2256,6 +2247,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     ),
                     isMdbListActive = isMdbListActive,
                     meta = meta,
+                    episodeDownloadFor = episodeDownloadFor,
                     isTablet = isTablet,
                     horizontalScrollPadding = contentHorizontalPadding,
                     playButtonLabel = playButtonLabel,
@@ -2445,6 +2437,7 @@ private fun ConfiguredMetaSections(
     settings: MetaScreenSettingsUiState,
     isMdbListActive: Boolean,
     meta: MetaDetails,
+    episodeDownloadFor: (MetaVideo) -> DownloadItem?,
     isTablet: Boolean,
     horizontalScrollPadding: Dp,
     playButtonLabel: String,
@@ -2496,8 +2489,8 @@ private fun ConfiguredMetaSections(
     onCompanyClick: ((MetaCompany, String) -> Unit)?,
     sharedTransitionScope: SharedTransitionScope?,
     animatedVisibilityScope: AnimatedVisibilityScope?,
-    selectedSeason: Int? = null,
-    onSeasonSelected: ((Int) -> Unit)? = null,
+    selectedSeason: Int?,
+    onSeasonSelected: (Int) -> Unit,
 ) {
     val enabledItems = settings.items.filter { it.enabled }
 
@@ -2594,6 +2587,7 @@ private fun ConfiguredMetaSections(
                 if (hasEpisodes) {
                     DetailSeriesContent(
                         meta = meta,
+                        episodeDownloadFor = episodeDownloadFor,
                         showHeader = showHeader,
                         horizontalScrollPadding = horizontalScrollPadding,
                         preferredSeasonNumber = preferredEpisodeSeasonNumber,

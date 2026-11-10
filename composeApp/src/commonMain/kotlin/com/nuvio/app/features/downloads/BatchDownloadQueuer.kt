@@ -43,6 +43,7 @@ internal object BatchDownloadQueuer {
         scope.launch(queueJob + Dispatchers.Default) {
             var failedCount = 0
             for ((index, item) in items.withIndex()) {
+                if (ProfileRepository.activeProfileId != startingProfileId) break
                 val target = meta.batchTargetFor(item.episode, item.season)
                 val streamToEnqueue = when (val resolved = resolveDownloadableStream(item.stream, target)) {
                     is StreamCandidateResolution.Success -> resolved.stream
@@ -59,12 +60,14 @@ internal object BatchDownloadQueuer {
                     }
                 }
 
-                withContext(Dispatchers.Main) {
-                    if (ProfileRepository.activeProfileId != startingProfileId) return@withContext
+                val didEnqueue = withContext(Dispatchers.Main) {
+                    if (ProfileRepository.activeProfileId != startingProfileId) return@withContext false
                     if (!enqueue(meta, item.episode, target, streamToEnqueue)) failedCount++
+                    true
                 }
+                if (!didEnqueue) break
             }
-            if (failedCount > 0) {
+            if (failedCount > 0 && ProfileRepository.activeProfileId == startingProfileId) {
                 val message = if (failedCount == 1) {
                     Res.string.batch_download_failed_single
                 } else {

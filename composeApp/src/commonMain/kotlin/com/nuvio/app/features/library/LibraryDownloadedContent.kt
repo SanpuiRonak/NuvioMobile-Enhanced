@@ -322,7 +322,7 @@ private fun StatusBadge(
             }
         }
         DownloadStatus.Failed -> stringResource(Res.string.downloads_status_failed)
-        DownloadStatus.Completed -> stringResource(Res.string.downloads_section_active)
+        DownloadStatus.Completed -> ""
     }
 
     Surface(

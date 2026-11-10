@@ -126,16 +126,7 @@ object MetaDetailsRepository {
         val savedOfflineMeta = DownloadsRepository.getSavedMetaDetails(id)
         val isOffline = NetworkStatusRepository.uiState.value.isOfflineLike
 
-        /** Shows the saved copy of a downloaded title; false when there is none. */
-        fun publishSavedOfflineMeta(reason: String): Boolean {
-            savedOfflineMeta ?: return false
-            log.i { "$reason, using saved download metadata type=$type id=$id" }
-            _uiState.value = MetaDetailsUiState(meta = savedOfflineMeta.withUnreleasedFilter())
-            activeRequestKey = requestKey
-            return true
-        }
-
-        if (isOffline && publishSavedOfflineMeta("Offline")) return
+        if (isOffline && publishSavedOfflineMeta(savedOfflineMeta, type, id, requestKey, "Offline")) return
         if (savedOfflineMeta != null) {
             if (currentState.meta?.type != type || currentState.meta.id != id) {
                 log.d { "Using saved download metadata while refreshing for type=$type id=$id" }
@@ -183,7 +174,7 @@ object MetaDetailsRepository {
                     return@launch
                 }
 
-                if (publishSavedOfflineMeta("No addon or TMDB meta")) return@launch
+                if (publishSavedOfflineMeta(savedOfflineMeta, type, id, requestKey, "No addon or TMDB meta")) return@launch
 
                 log.w { "No addon provides meta for type=$type id=$id" }
                 InAppLogger.warn("Metadata/MetaDetailsRepository", "No addon provides meta type=$type id=$id lookup=$metaLookupId")
@@ -222,7 +213,7 @@ object MetaDetailsRepository {
                 return@launch
             }
 
-            if (publishSavedOfflineMeta("Failed to load meta from all providers")) return@launch
+            if (publishSavedOfflineMeta(savedOfflineMeta, type, id, requestKey, "Failed to load meta from all providers")) return@launch
 
             InAppLogger.error("Metadata/MetaDetailsRepository", "Failed to load meta from all providers type=$type id=$id lookup=$metaLookupId")
             _uiState.value = MetaDetailsUiState(
@@ -230,6 +221,21 @@ object MetaDetailsRepository {
             )
             activeRequestKey = null
         }
+    }
+
+    /** Publishes saved offline details as the final metadata fallback. */
+    private fun publishSavedOfflineMeta(
+        savedMeta: MetaDetails?,
+        type: String,
+        id: String,
+        requestKey: String,
+        reason: String,
+    ): Boolean {
+        savedMeta ?: return false
+        log.i { "$reason, using saved download metadata type=$type id=$id" }
+        _uiState.value = MetaDetailsUiState(meta = savedMeta.withUnreleasedFilter())
+        activeRequestKey = requestKey
+        return true
     }
 
     fun peek(type: String, id: String): MetaDetails? {

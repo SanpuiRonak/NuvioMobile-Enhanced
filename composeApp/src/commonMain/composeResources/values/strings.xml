@@ -2224,7 +2224,9 @@
     <string name="downloads_enqueue_queued">Download has been queued</string>
     <string name="downloads_enqueue_queued_multiple">Downloads have been queued</string>
     <string name="downloads_enqueue_unsupported_format">Unsupported stream format for downloads</string>
-    <string name="downloads_enqueue_requires_wifi">Connect to Wi-Fi to download, or allow mobile data in Downloads settings</string>
+    <string name="downloads_resolution_720p">720p</string>
+    <string name="downloads_resolution_1080p">1080p</string>
+    <string name="downloads_resolution_2160p">2160p (4K)</string>
     <string name="downloads_allow_mobile_data_title">Allow mobile data</string>
     <string name="downloads_show_download_button_title">Show download button</string>
     <string name="downloads_show_download_button_description">Adds a download button under Play on a title's details page.</string>

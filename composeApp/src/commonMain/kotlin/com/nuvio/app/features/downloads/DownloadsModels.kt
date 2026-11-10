@@ -11,8 +11,11 @@ import nuvio.composeapp.generated.resources.downloads_enqueue_replaced
 import nuvio.composeapp.generated.resources.downloads_enqueue_queued
 import nuvio.composeapp.generated.resources.downloads_enqueue_started
 import nuvio.composeapp.generated.resources.downloads_enqueue_unsupported_format
-import nuvio.composeapp.generated.resources.downloads_enqueue_requires_wifi
 import org.jetbrains.compose.resources.getString
+import org.jetbrains.compose.resources.StringResource
+import nuvio.composeapp.generated.resources.downloads_resolution_720p
+import nuvio.composeapp.generated.resources.downloads_resolution_1080p
+import nuvio.composeapp.generated.resources.downloads_resolution_2160p
 
 @Serializable
 enum class DownloadStatus {
@@ -25,11 +28,11 @@ enum class DownloadStatus {
 
 enum class DownloadPreferredResolution(
     val resolution: Int,
-    val label: String,
+    val label: StringResource,
 ) {
-    P720(720, "720p"),
-    P1080(1080, "1080p"),
-    P2160(2160, "2160p (4K)");
+    P720(720, Res.string.downloads_resolution_720p),
+    P1080(1080, Res.string.downloads_resolution_1080p),
+    P2160(2160, Res.string.downloads_resolution_2160p);
 
     companion object {
         val DEFAULT = P1080

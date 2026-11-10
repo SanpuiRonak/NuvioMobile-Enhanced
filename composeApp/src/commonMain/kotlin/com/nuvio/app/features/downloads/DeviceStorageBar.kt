@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val STORAGE_REFRESH_INTERVAL_MS = 10_000L
 
@@ -44,11 +46,11 @@ fun DeviceStorageBar(
     appDownloadsBytes: Long,
     modifier: Modifier = Modifier,
 ) {
-    val initialStats = remember { DownloadsStoragePlatform.getDeviceStorageStats() }
+    val initialStats = remember { DeviceStorageStats(0L, 0L) }
     val stats by produceState(initialStats) {
         while (true) {
+            value = withContext(Dispatchers.Default) { DownloadsStoragePlatform.getDeviceStorageStats() }
             delay(STORAGE_REFRESH_INTERVAL_MS)
-            value = DownloadsStoragePlatform.getDeviceStorageStats()
         }
     }
     val totalBytes = stats.totalBytes
