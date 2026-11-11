@@ -11,9 +11,28 @@ import platform.SystemConfiguration.SCNetworkReachabilityFlagsVar
 import platform.SystemConfiguration.SCNetworkReachabilityGetFlags
 import platform.SystemConfiguration.kSCNetworkReachabilityFlagsIsWWAN
 import platform.SystemConfiguration.kSCNetworkReachabilityFlagsReachable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 
 @OptIn(ExperimentalForeignApi::class)
 actual object DownloadNetworkGuard {
+    private val _transportState = MutableStateFlow(true)
+    actual val transportState = _transportState.asStateFlow()
+
+    init {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            while (true) {
+                _transportState.value = isOnWifi()
+                delay(1_000L)
+            }
+        }
+    }
     actual fun isOnWifi(): Boolean {
         val reachability = SCNetworkReachabilityCreateWithName(null, "www.apple.com") ?: return true
         try {

@@ -7,4 +7,5 @@ internal expect object DownloadsStorage {
     fun saveOfflineMetadataPayload(payload: String)
     fun getDownloadLocationUri(): String?
     fun setDownloadLocationUri(uri: String?)
+    fun clearUnfinishedDownloads()
 }

@@ -6,6 +6,7 @@ import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
 import com.nuvio.app.features.profiles.MAX_PROFILES
+import com.nuvio.app.core.storage.ProfileScopedKey
 
 internal actual object PlatformLocalAccountDataCleaner {
     private val plainKeys = listOf(
@@ -75,9 +76,12 @@ internal actual object PlatformLocalAccountDataCleaner {
     actual fun wipe() {
         val defaults = NSUserDefaults.standardUserDefaults
 
+        com.nuvio.app.features.downloads.DownloadsStorage.clearUnfinishedDownloads()
+
         plainKeys.forEach(defaults::removeObjectForKey)
 
         (1..MAX_PROFILES).forEach { profileId ->
+            defaults.removeObjectForKey(ProfileScopedKey.of("downloads_offline_metadata", profileId))
             profileIndexedPrefixes.forEach { prefix ->
                 defaults.removeObjectForKey("$prefix$profileId")
             }

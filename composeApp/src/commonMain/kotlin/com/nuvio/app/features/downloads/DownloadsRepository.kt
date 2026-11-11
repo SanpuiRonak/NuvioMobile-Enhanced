@@ -1,7 +1,8 @@
 package com.nuvio.app.features.downloads
 
-import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.core.sync.AppForegroundMonitor
+import com.nuvio.app.core.sync.AppVisibility
 import com.nuvio.app.features.player.SubtitleRequestExtras
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
@@ -45,19 +46,12 @@ object DownloadsRepository {
         observeInputs()
     }
 
-    /**
-     * Restarts queued downloads when a limit is raised or the network allows them again,
-     * and keeps offline details current whenever a downloaded title's details are opened.
-     */
+    /** Restarts queued downloads when limits or network transport allow them again. */
     private fun observeInputs() {
         if (isObservingInputs) return
         isObservingInputs = true
-        combine(
-            DownloadsSettingsRepository.concurrencyLimits,
-            DownloadsSettingsRepository.allowMobileDataDownloads,
-            NetworkStatusRepository.uiState,
-        ) { limits, allowMobile, _ ->
-            limits to (allowMobile || DownloadNetworkGuard.isOnWifi())
+        combine(DownloadsSettingsRepository.concurrencyLimits, DownloadsSettingsRepository.allowMobileDataDownloads, DownloadNetworkGuard.transportState) { limits, allowMobile, wifi ->
+            limits to isDownloadNetworkAllowed()
         }
             .distinctUntilChanged()
             .onEach { (_, networkAllowed) ->
@@ -71,6 +65,9 @@ object DownloadsRepository {
                 advanceDownloadQueue()
             }
             .launchIn(scope)
+        AppForegroundMonitor.events()
+            .onEach { visibility -> if (visibility == AppVisibility.Foreground && hasLoaded) advanceDownloadQueue() }
+            .launchIn(scope)
     }
 
     fun onProfileChanged() {
@@ -82,6 +79,21 @@ object DownloadsRepository {
     }
 
     fun clearLocalState() {
+        val storedItems = if (hasLoaded) _uiState.value.items else {
+            runCatching { DownloadsCodec.decodePayload(DownloadsStorage.loadPayload().orEmpty()).items }.getOrDefault(emptyList())
+        }
+        val unfinished = storedItems.filter { it.status != DownloadStatus.Completed }
+        unfinished.forEach { item ->
+            activeHandles.remove(item.id)?.cancel()
+            DownloadsPlatformDownloader.removePartialFile(item.fileName)
+        }
+        val completed = storedItems.filter { it.status == DownloadStatus.Completed }
+        if (hasLoaded) {
+            publish(completed)
+            persist()
+        } else {
+            DownloadsStorage.savePayload(DownloadsCodec.encodePayload(completed))
+        }
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
         hasLoaded = false
@@ -94,18 +106,6 @@ object DownloadsRepository {
     fun getOfflineMetadata(showId: String): StoredOfflineMeta? {
         ensureLoaded()
         return OfflineMetadataRepository[showId]
-    }
-
-    fun getSavedMetaDetails(showId: String): MetaDetails? {
-        ensureLoaded()
-        val showItems = _uiState.value.items.filter { it.parentMetaId == showId }
-        return OfflineMetadataRepository[showId]?.toMetaDetails(showItems)
-            ?: showItems.takeIf { it.isNotEmpty() }?.toOfflineMetaDetails(showId)
-    }
-
-    /** Keeps the offline copy of [meta] current, but only for titles that have downloads. */
-    fun onMetaLoaded(meta: MetaDetails) {
-        OfflineMetadataRepository.onMetaLoaded(meta)
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -205,46 +205,29 @@ object DownloadsRepository {
             episodeNumber = episodeNumber,
         )
 
-        val meta = showMeta
-        val resolvedEpisodeThumbnail = episodeThumbnail ?: meta?.videos
+        updateOfflineMetadata(
+            meta = showMeta,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            videoId = videoId,
+            episodeTitle = episodeTitle,
+            episodeThumbnail = episodeThumbnail,
+            episodeOverview = episodeOverview,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+        )
+        val resolvedEpisodeThumbnail = episodeThumbnail ?: showMeta?.videos
             ?.firstOrNull { it.season == seasonNumber && it.episode == episodeNumber }
             ?.thumbnail
-        if (meta != null) {
-            OfflineMetadataRepository.merge(meta)
-        } else {
-            OfflineMetadataRepository.recordBasic(
-                showId = parentMetaId,
-                type = parentMetaType,
-                title = title,
-                logo = logo,
-                poster = poster,
-                background = background,
-                episode = if (seasonNumber != null && episodeNumber != null) {
-                    StoredDownloadedVideoMeta(
-                        id = videoId,
-                        title = episodeTitle.orEmpty(),
-                        thumbnail = resolvedEpisodeThumbnail,
-                        season = seasonNumber,
-                        episode = episodeNumber,
-                        overview = episodeOverview,
-                    )
-                } else {
-                    null
-                },
-            )
-        }
 
-        var replacedExisting = false
+        val replacement = replaceExistingDownload(logicalKey)
+        val replacedExisting = replacement != null
         val currentItems = _uiState.value.items.toMutableList()
-        val existing = currentItems.firstOrNull { it.logicalContentKey == logicalKey }
-        if (existing != null) {
-            replacedExisting = true
-            activeHandles.remove(existing.id)?.cancel()
-            DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
-            DownloadsPlatformDownloader.removePartialFile(existing.fileName)
-            currentItems.removeAll { it.id == existing.id }
-        }
-
+        replacement?.let { currentItems.removeAll { item -> item.id == it.id } }
         val downloadId = nextDownloadId(now)
         val fileName = buildFileName(
             title = title,
@@ -305,6 +288,33 @@ object DownloadsRepository {
         } else {
             DownloadEnqueueResult.Started
         }
+    }
+
+    private fun updateOfflineMetadata(
+        meta: MetaDetails?, parentMetaId: String, parentMetaType: String, title: String,
+        logo: String?, poster: String?, background: String?, videoId: String, episodeTitle: String?,
+        episodeThumbnail: String?, episodeOverview: String?, seasonNumber: Int?, episodeNumber: Int?,
+    ) {
+        if (meta != null) {
+            OfflineMetadataRepository.merge(meta)
+        } else {
+            OfflineMetadataRepository.recordBasic(
+                showId = parentMetaId, type = parentMetaType, title = title, logo = logo,
+                poster = poster, background = background,
+                episode = if (seasonNumber != null && episodeNumber != null) StoredDownloadedVideoMeta(
+                    id = videoId, title = episodeTitle.orEmpty(), thumbnail = episodeThumbnail,
+                    season = seasonNumber, episode = episodeNumber, overview = episodeOverview,
+                ) else null,
+            )
+        }
+    }
+
+    private fun replaceExistingDownload(logicalKey: String): DownloadItem? {
+        val existing = _uiState.value.items.firstOrNull { it.logicalContentKey == logicalKey } ?: return null
+        activeHandles.remove(existing.id)?.cancel()
+        DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
+        DownloadsPlatformDownloader.removePartialFile(existing.fileName)
+        return existing
     }
 
     /** Starts queued downloads until the concurrency limits or network policy stop it. */
@@ -376,7 +386,6 @@ object DownloadsRepository {
         ensureLoaded()
         _uiState.value.items
             .filter { it.parentMetaId == seriesId && it.isResumable }
-            .sortedForSeriesDownloads()
             .map { it.id }
             .let(::resumeDownloads)
     }
@@ -394,7 +403,7 @@ object DownloadsRepository {
         resumeDownloads(listOf(downloadId))
     }
 
-    /** Resumes paused and retries failed downloads, starting them in [ids] order as limits allow. */
+    /** Requeues paused and failed downloads; the queue starts items in persisted creation order. */
     fun resumeDownloads(ids: Collection<String>) {
         ensureLoaded()
         val current = _uiState.value.items
@@ -498,6 +507,7 @@ object DownloadsRepository {
                     item
                 } else {
                     shouldPersistNormalized = true
+                    DownloadsPlatformDownloader.pauseRestoredItem(item)
                     item.copy(status = DownloadStatus.Queued)
                 }
             } else {
@@ -577,6 +587,12 @@ object DownloadsRepository {
                     current.copy(status = DownloadStatus.Paused, errorMessage = null)
                 }
                 advanceDownloadQueue()
+            },
+            onQueued = {
+                activeHandles.remove(item.id)
+                mutateItem(item.id) { current ->
+                    if (current.status == DownloadStatus.Downloading) current.copy(status = DownloadStatus.Queued, errorMessage = null) else current
+                }
             },
         )
 
@@ -669,7 +685,7 @@ internal fun DownloadItem.hasPlayableLocalFile(): Boolean =
         ) != null
 
 @Serializable
-private data class StoredDownloadsPayload(
+internal data class StoredDownloadsPayload(
     val items: List<DownloadItem> = emptyList(),
     val showMetadata: Map<String, StoredOfflineMeta> = emptyMap(),
 )
@@ -677,7 +693,7 @@ private data class StoredDownloadsPayload(
 @Serializable
 private data class StoredDownloadItemsPayload(val items: List<DownloadItem> = emptyList())
 
-private object DownloadsCodec {
+internal object DownloadsCodec {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
