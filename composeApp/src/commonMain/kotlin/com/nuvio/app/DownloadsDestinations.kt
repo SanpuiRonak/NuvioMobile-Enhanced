@@ -29,8 +29,8 @@ internal fun DownloadsDestination(
         } else {
             null
         },
-        onNavigateToMovie = { movieId, title ->
-            navController.navigate(DetailRoute(type = "movie", id = movieId, title = title))
+        onNavigateToMovie = { type, movieId, title ->
+            navController.navigate(DetailRoute(type = type, id = movieId, title = title))
         },
         onOpenSettings = {
             navController.navigate(DownloadsSettingsRoute(downloadsSettingsTitle))

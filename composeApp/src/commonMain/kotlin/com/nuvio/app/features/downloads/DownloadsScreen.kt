@@ -60,7 +60,7 @@ fun DownloadsScreen(
     onOpenDownload: (DownloadItem) -> Unit,
     initialShowId: String? = null,
     onNavigateToShow: ((showId: String, title: String) -> Unit)? = null,
-    onNavigateToMovie: ((movieId: String, title: String) -> Unit)? = null,
+    onNavigateToMovie: ((type: String, movieId: String, title: String) -> Unit)? = null,
     onBackFromShow: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null,
 ) {
@@ -74,7 +74,6 @@ fun DownloadsScreen(
 
     var selectedShowId by rememberSaveable(initialShowId) { mutableStateOf(initialShowId) }
     var downloadPendingDeletionId by rememberSaveable { mutableStateOf<String?>(null) }
-    val openDownloadsDirectoryFailedText = stringResource(Res.string.downloads_open_directory_failed)
 
     val allSeriesEpisodes = remember(uiState.items) {
         uiState.items
@@ -161,7 +160,7 @@ private fun LazyListScope.downloadsRootContent(
     uiState: DownloadsUiState,
     onOpenDownload: (DownloadItem) -> Unit,
     onOpenShow: (showId: String, title: String) -> Unit,
-    onOpenMovie: ((movieId: String, title: String) -> Unit)?,
+    onOpenMovie: ((type: String, movieId: String, title: String) -> Unit)?,
     onDeleteDownload: (String) -> Unit,
 ) {
     val activeItems = uiState.activeItems
@@ -177,7 +176,7 @@ private fun LazyListScope.downloadsRootContent(
             subtitle = null,
             onPlay = { onOpenDownload(item) },
             onDelete = { onDeleteDownload(item.id) },
-            onClick = onOpenMovie?.let { open -> { open(item.contentId, item.title) } },
+            onClick = onOpenMovie?.let { open -> { open(item.parentMetaType, item.contentId, item.title) } },
         )
     }
 

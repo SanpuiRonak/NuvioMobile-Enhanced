@@ -133,10 +133,10 @@ private fun EpisodeSelectionDialog(
         }.collectAsStateWithLifecycle()
         val currentDownloads = downloadsUiState.items
 
-        fun isDownloaded(episode: MetaVideo, season: Int): Boolean =
+        fun isUnavailable(episode: MetaVideo, season: Int): Boolean =
             isBatchEpisodeUnavailable(currentDownloads, plan.meta.id, episode, season)
 
-        fun isCompleted(episode: MetaVideo, season: Int): Boolean =
+        fun isDownloaded(episode: MetaVideo, season: Int): Boolean =
             isBatchEpisodeDownloaded(currentDownloads, plan.meta.id, episode, season)
 
         Column(
@@ -218,14 +218,14 @@ private fun EpisodeSelectionDialog(
                     val episodeNumber = episode.episode ?: 0
                     val key = episode.batchKey(plan.visibleSeason)
                     val isChecked = key in plan.selectedEpisodeKeys
-                    val downloaded = isDownloaded(episode, plan.visibleSeason)
-                    val completed = isCompleted(episode, plan.visibleSeason)
+                    val unavailable = isUnavailable(episode, plan.visibleSeason)
+                    val completed = isDownloaded(episode, plan.visibleSeason)
                     val watched = isEpisodeWatched(episode)
 
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = !downloaded) {
+                            .clickable(enabled = !unavailable) {
                                 BatchDownloadCoordinator.toggleEpisodeSelection(plan.visibleSeason, episodeNumber)
                             },
                         shape = RoundedCornerShape(8.dp),
@@ -239,8 +239,8 @@ private fun EpisodeSelectionDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
-                                checked = if (downloaded) true else isChecked,
-                                enabled = !downloaded,
+                                checked = if (unavailable) true else isChecked,
+                                enabled = !unavailable,
                                 onCheckedChange = {
                                     BatchDownloadCoordinator.toggleEpisodeSelection(plan.visibleSeason, episodeNumber)
                                 },
@@ -251,13 +251,13 @@ private fun EpisodeSelectionDialog(
                                 Text(
                                     text = localizedEpisodeLabel(plan.visibleSeason, episodeNumber, episodeTitle),
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = if (downloaded) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                    color = if (unavailable) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 val tags = mutableListOf<String>()
                                 if (completed) tags.add(stringResource(Res.string.season_download_already_downloaded))
-                                else if (downloaded) tags.add(stringResource(Res.string.downloads_status_already_in_progress))
+                                else if (unavailable) tags.add(stringResource(Res.string.downloads_status_already_in_progress))
                                 if (watched) tags.add(stringResource(Res.string.episodes_cd_watched))
                                 if (tags.isNotEmpty()) {
                                     Text(

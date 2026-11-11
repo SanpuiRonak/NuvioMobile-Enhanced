@@ -62,18 +62,14 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ViewAgenda
-import com.nuvio.app.core.ui.NuvioStatusModal
-import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.downloads.DownloadsQueueDialog
 import com.nuvio.app.features.downloads.DownloadItem
-import com.nuvio.app.features.downloads.DownloadsPlatformDownloader
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.DownloadDeleteConfirmation
 import com.nuvio.app.features.downloads.OpenDownloadsFolderButton
@@ -212,7 +208,7 @@ fun LibraryScreen(
     onPreviewLongClick: ((MetaPreview) -> Unit)? = null,
     onDownloadsClick: (() -> Unit)? = null,
     onOpenDownload: ((DownloadItem) -> Unit)? = null,
-    onOpenShowDetails: ((showId: String, title: String) -> Unit)? = null,
+    onOpenShowDetails: ((type: String, showId: String, title: String) -> Unit)? = null,
 ) {
     val uiState by remember {
         LibraryRepository.ensureLoaded()
@@ -246,7 +242,6 @@ fun LibraryScreen(
     }.collectAsStateWithLifecycle()
     var downloadPendingDeletionIds by remember { mutableStateOf<List<String>?>(null) }
     var showActiveQueuedDialog by rememberSaveable { mutableStateOf(false) }
-    val openDownloadsDirectoryFailedText = stringResource(Res.string.downloads_open_directory_failed)
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     val unknownReleaseLabel = stringResource(Res.string.generic_unknown)
     var observedOfflineState by remember { mutableStateOf(false) }
@@ -629,7 +624,7 @@ fun LibraryScreen(
             val effectivePosterClick: ((LibraryItem) -> Unit)? = if (sourceMode == LibraryViewMode.Downloaded) {
                 { item ->
                     if (item.isSeries) {
-                        onOpenShowDetails?.invoke(item.id, item.name) ?: onPosterClick?.invoke(item)
+                        onOpenShowDetails?.invoke(item.type, item.id, item.name) ?: onPosterClick?.invoke(item)
                     } else {
                         onPosterClick?.invoke(item)
                     }

@@ -663,6 +663,7 @@ fun MetaDetailsScreen(
                         meta.seriesPrimaryAction(
                             entries = watchProgressUiState.entries,
                             watchedItems = watchedUiState.items,
+                            watchedKeys = watchedUiState.watchedKeys,
                             todayIsoDate = todayIsoDate,
                             preferFurthestEpisode = cwPrefs.upNextFromFurthestEpisode,
                             allowRewatch = true,
@@ -1604,7 +1605,7 @@ fun MetaDetailsScreen(
                         }
 
                         selectedSeasonForActions?.let { selectedSeason ->
-                            val seasonLabel = selectedSeasonLabel(selectedSeason)
+                            val seasonLabel = seasonLabel(selectedSeason)
                             val seasonEpisodes = remember(meta, selectedSeason, todayIsoDate) {
                                 meta.releasedEpisodesForSeason(
                                     seasonNumber = selectedSeason,
@@ -2093,9 +2094,6 @@ private fun DetailHeaderOverlay(
 
 private const val RATING_SHEET_OPEN_DELAY_MS = 350L
 
-@Composable
-private fun selectedSeasonLabel(season: Int): String =
-    seasonLabel(season)
 
 private fun isEpisodeWatchedForActions(
     meta: MetaDetails,

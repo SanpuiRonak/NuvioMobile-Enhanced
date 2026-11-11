@@ -100,7 +100,7 @@ internal fun buildDownloadedSections(
         .groupBy { it.contentId }
         .map { (contentId, downloads) ->
             val offlineMeta = offlineMetadataFor(contentId)
-            val saved = savedItemsById[contentId] ?: savedItemsById[downloads.first().id]
+            val saved = savedItemsById[contentId]
             saved?.withReleaseInfoFallback(offlineMeta) ?: downloads.toLibraryItem(contentId, offlineMeta)
         }
         .distinctBy { it.id }
