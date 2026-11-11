@@ -1700,9 +1700,6 @@ internal fun MainAppContent(
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
                                 onOpenDownload = ::openDownloadedItem,
-                                onOpenShowDetails = { type, showId, title ->
-                                    navController.navigate(DetailRoute(type = type, id = showId, title = title))
-                                },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onLiveTvChannelClick = onLiveTvChannelClick,

@@ -158,7 +158,6 @@ internal data class AppTabActions(
     val onConnectCloudClick: (() -> Unit)? = null,
     val onDownloadsClick: () -> Unit = {},
     val onOpenDownload: ((DownloadItem) -> Unit)? = null,
-    val onOpenShowDetails: ((type: String, showId: String, title: String) -> Unit)? = null,
     val onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     val onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     val onLiveTvChannelClick: (LiveTvChannel) -> Unit = {},
@@ -246,7 +245,6 @@ internal fun AppTabHost(
                     onPreviewLongClick = actions.onPosterLongClick,
                     onDownloadsClick = actions.onDownloadsClick,
                     onOpenDownload = actions.onOpenDownload,
-                    onOpenShowDetails = actions.onOpenShowDetails,
                     disintegrationRequest = state.libraryDisintegrationRequest,
                 )
             }
