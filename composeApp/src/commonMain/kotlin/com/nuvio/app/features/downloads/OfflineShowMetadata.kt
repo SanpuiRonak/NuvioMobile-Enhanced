@@ -201,7 +201,7 @@ internal object OfflineMetadataRepository {
         ensureLoaded()
         val before = store[showId] ?: return
         store.remove(showId)
-        if (before != null) persist()
+        persist()
     }
 
     fun migrateLegacy(metadata: Map<String, StoredOfflineMeta>) {

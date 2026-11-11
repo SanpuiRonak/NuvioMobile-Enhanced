@@ -224,7 +224,7 @@ object StreamsRepository {
         }
 
         // Initialise loading placeholders
-        val installedAddonOrder = streamAddons.map { it.addonName }
+        val installedAddonOrder = targets.installedAddonOrder
         val placeholderGroups = StreamAutoPlaySelector.orderAddonStreams(streamAddons.map { addon ->
             AddonStreamGroup(
                 addonName = addon.addonName,
@@ -264,7 +264,7 @@ object StreamsRepository {
                 serverSources.size
 
             val installedAddonNames = installedAddonOrder.toSet()
-            val installedAddonIds = streamAddons.map { it.addonId }.toSet()
+            val installedAddonIds = targets.streamAddonIds
             val debridAvailabilityJobs = mutableListOf<Job>()
             var autoSelectTriggered = false
             var timeoutElapsed = false

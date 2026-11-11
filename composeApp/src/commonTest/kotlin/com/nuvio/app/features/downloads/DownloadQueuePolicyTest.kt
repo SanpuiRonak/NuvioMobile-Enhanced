@@ -34,6 +34,12 @@ class DownloadQueuePolicyTest {
         assertFalse(DownloadQueuePolicy(3, 2, 2, false).canStart("show", emptyList()))
     }
 
+    @Test fun `queued items remain queued while network policy disallows downloads`() {
+        val queued = listOf(item("first", createdAt = 1), item("second", createdAt = 2))
+        assertEquals(null, DownloadQueuePolicy(3, 2, 2, false).nextToStart(queued))
+        assertEquals(2, queued.count { it.status == DownloadStatus.Queued })
+    }
+
     @Test fun `total limit blocks starts`() {
         val running = listOf(item("a", DownloadStatus.Downloading), item("b", DownloadStatus.Downloading, show = "other"))
         assertFalse(DownloadQueuePolicy(2, 3, 3, true).canStart("third", running))

@@ -102,6 +102,7 @@ import org.jetbrains.compose.resources.getString
 import kotlin.time.Clock
 
 internal object SettingsConfigTransfer {
+    private const val PREFERRED_DOWNLOAD_RESOLUTION_KEY = "preferred_download_resolution"
     private const val FORMAT = "nuvio_settings_config"
     private const val VERSION = 1
     private const val KEY_SETTINGS = "settings"
@@ -452,7 +453,7 @@ internal object SettingsConfigTransfer {
         put("episode_release_alerts_enabled", EpisodeReleaseNotificationsRepository.uiState.value.isEnabled)
         put("allow_mobile_data_downloads", DownloadsSettingsRepository.allowMobileDataDownloads.value)
         put("show_download_button", DownloadsSettingsRepository.showDownloadButton.value)
-        put("preferred_download_resolution", DownloadsSettingsRepository.preferredResolution.value.name)
+        put(PREFERRED_DOWNLOAD_RESOLUTION_KEY, DownloadsSettingsRepository.preferredResolution.value.name)
         DownloadConcurrencyLimit.entries.forEach { limit ->
             put(limit.storageKey, DownloadsSettingsRepository.concurrencyLimit(limit))
         }
@@ -469,7 +470,7 @@ internal object SettingsConfigTransfer {
         payload.boolean("episode_release_alerts_enabled")?.let(EpisodeReleaseNotificationsRepository::applyFromSyncEnabled)
         payload.boolean("allow_mobile_data_downloads")?.let(DownloadsSettingsRepository::setAllowMobileDataDownloads)
         payload.boolean("show_download_button")?.let(DownloadsSettingsRepository::setShowDownloadButton)
-        payload.string("preferred_download_resolution")?.let {
+        payload.string(PREFERRED_DOWNLOAD_RESOLUTION_KEY)?.let {
             DownloadsSettingsRepository.setPreferredResolution(DownloadPreferredResolution.fromStorage(it))
         }
         DownloadConcurrencyLimit.entries.forEach { limit ->

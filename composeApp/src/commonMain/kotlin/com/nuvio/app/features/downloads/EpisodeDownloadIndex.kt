@@ -8,7 +8,7 @@ class EpisodeDownloadIndex private constructor(
 ) {
     /**
      * The download for an episode (or the movie when both numbers are null), matched by video id
-     * or by season and episode. Prefers running, then queued, then playable, then completed.
+     * or by season and episode. Prefers running, queued, completed, then any remaining match.
      */
     fun find(seasonNumber: Int?, episodeNumber: Int?, videoId: String? = null): DownloadItem? {
         val byId = videoId?.trim()?.takeIf { it.isNotEmpty() }?.let { byVideoId[it] }.orEmpty()
@@ -36,7 +36,6 @@ class EpisodeDownloadIndex private constructor(
         private fun preferred(matches: List<DownloadItem>): DownloadItem? =
             matches.firstOrNull { it.status == DownloadStatus.Downloading }
                 ?: matches.firstOrNull { it.status == DownloadStatus.Queued }
-                ?: matches.firstOrNull { it.status == DownloadStatus.Completed }
                 ?: matches.firstOrNull { it.status == DownloadStatus.Completed }
                 ?: matches.firstOrNull()
     }

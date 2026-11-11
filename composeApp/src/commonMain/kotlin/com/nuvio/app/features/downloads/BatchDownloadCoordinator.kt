@@ -90,42 +90,35 @@ fun batchEpisodeKey(season: Int, episode: Int?): String = "${season}_${episode ?
 
 fun MetaVideo.batchKey(season: Int): String = batchEpisodeKey(season, episode)
 
-/** True when the content already has a download that is finished, running, paused or waiting. */
+/** Returns the existing non-failed download for this logical episode. */
 private fun List<DownloadItem>.downloadFor(logicalKey: String): DownloadItem? =
     firstOrNull { it.logicalContentKey == logicalKey && it.status != DownloadStatus.Failed }
+
+private fun findEpisodeDownload(downloads: List<DownloadItem>, metaId: String, episode: MetaVideo, season: Int): DownloadItem? =
+    downloads.downloadFor(buildLogicalKey(
+        parentMetaId = metaId,
+        seasonNumber = episode.episode?.let { episode.season ?: season },
+        episodeNumber = episode.episode,
+    ))
 
 fun isBatchEpisodeDownloaded(
     currentDownloads: List<DownloadItem>,
     metaId: String,
     episode: MetaVideo,
     season: Int,
-): Boolean = currentDownloads.downloadFor(
-    buildLogicalKey(
-        parentMetaId = metaId,
-        seasonNumber = episode.episode?.let { episode.season ?: season },
-        episodeNumber = episode.episode,
-    ),
-).let { it?.status == DownloadStatus.Completed }
+): Boolean = findEpisodeDownload(currentDownloads, metaId, episode, season)
+    .let { it?.status == DownloadStatus.Completed }
 
-fun isBatchEpisodeUnavailable(currentDownloads: List<DownloadItem>, metaId: String, episode: MetaVideo, season: Int): Boolean =
-    currentDownloads.downloadFor(buildLogicalKey(
-        parentMetaId = metaId,
-        seasonNumber = episode.episode?.let { episode.season ?: season },
-        episodeNumber = episode.episode,
-    )) != null
+internal fun isBatchEpisodeUnavailable(currentDownloads: List<DownloadItem>, metaId: String, episode: MetaVideo, season: Int): Boolean =
+    findEpisodeDownload(currentDownloads, metaId, episode, season) != null
 
 private fun isBatchEpisodeInProgress(
     currentDownloads: List<DownloadItem>,
     metaId: String,
     episode: MetaVideo,
     season: Int,
-): Boolean = currentDownloads.downloadFor(
-    buildLogicalKey(
-        parentMetaId = metaId,
-        seasonNumber = episode.episode?.let { episode.season ?: season },
-        episodeNumber = episode.episode,
-    ),
-).let { it != null && it.status != DownloadStatus.Completed }
+): Boolean = findEpisodeDownload(currentDownloads, metaId, episode, season)
+    .let { it != null && it.status != DownloadStatus.Completed }
 
 /** Short quality label for a stream, e.g. "1080p" or "WEB-DL"; null when nothing is known. */
 internal fun DebridStreamFacts.qualityBadge(): String? =
@@ -258,7 +251,7 @@ object BatchDownloadCoordinator {
     }
 
     fun selectAllForSeason(season: Int) {
-        updateSeasonSelection(season) { _, isDownloaded -> !isDownloaded }
+        updateSeasonSelection(season) { _, isUnavailable -> !isUnavailable }
     }
 
     fun selectUnwatchedForSeason(
@@ -277,7 +270,7 @@ object BatchDownloadCoordinator {
     /** Sets each episode of [season] selected or not according to [shouldSelect]. */
     private fun updateSeasonSelection(
         season: Int,
-        shouldSelect: (episode: MetaVideo, isDownloaded: Boolean) -> Boolean,
+        shouldSelect: (episode: MetaVideo, isUnavailable: Boolean) -> Boolean,
     ) {
         DownloadsRepository.ensureLoaded()
         val currentDownloads = DownloadsRepository.uiState.value.items
