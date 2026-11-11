@@ -183,17 +183,8 @@ fun DownloadsQueueDialog(
 
     val toDelete = pendingDeleteIds
     if (!toDelete.isNullOrEmpty()) {
-        NuvioStatusModal(
-            title = stringResource(Res.string.action_delete_confirm_title),
-            message = if (toDelete.size > 1) {
-                stringResource(Res.string.downloads_delete_selected_confirm, toDelete.size)
-            } else {
-                stringResource(Res.string.action_delete_confirm_message)
-            },
-            isVisible = true,
-            destructive = true,
-            confirmText = stringResource(Res.string.action_yes),
-            dismissText = stringResource(Res.string.action_no),
+        DownloadDeleteConfirmation(
+            count = toDelete.size,
             onConfirm = {
                 DownloadsRepository.cancelDownloads(toDelete)
                 selectedIds = selectedIds - toDelete.toSet()
@@ -692,7 +683,7 @@ private fun QueueRowThumbnail(item: DownloadItem, progress: Float) {
                 color = Color.Black.copy(alpha = 0.72f),
             ) {
                 Text(
-                    text = "${(progress * 100).toInt()}%",
+                    text = formatDownloadPercent(progress),
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold),
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),

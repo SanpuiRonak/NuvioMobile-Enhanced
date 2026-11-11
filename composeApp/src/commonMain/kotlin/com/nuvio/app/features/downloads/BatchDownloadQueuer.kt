@@ -149,5 +149,5 @@ internal object BatchDownloadQueuer {
     }
 
     private fun StreamItem.isDownloadableDirectLink(): Boolean =
-        playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }?.isSupportedDownloadUrl() == true
+        isDownloadableDirectUrl(playableDirectUrl)
 }

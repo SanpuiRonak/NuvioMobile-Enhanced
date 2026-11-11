@@ -6,6 +6,7 @@ import com.nuvio.app.features.debrid.DebridStreamPreferences
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.downloads.DownloadPreferredResolution
 import com.nuvio.app.features.downloads.isSupportedDownloadUrl
+import com.nuvio.app.features.downloads.isDownloadableDirectUrl
 
 internal data class StreamSelectionResult(
     val stream: StreamItem,
@@ -57,9 +58,8 @@ internal object StreamSourcePrefillSelector {
     }
 
     private fun isDownloadCapable(stream: StreamItem): Boolean {
-        val directUrl = stream.playableDirectUrl?.trim()?.takeIf { it.isNotBlank() }
-        return directUrl?.isSupportedDownloadUrl()
-            ?: (stream.isResolverDependent() || DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream))
+        return isDownloadableDirectUrl(stream.playableDirectUrl) ||
+            stream.isResolverDependent() || DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream)
     }
 
     private data class Candidate(

@@ -75,6 +75,9 @@ import com.nuvio.app.features.downloads.DownloadsQueueDialog
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsPlatformDownloader
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.DownloadDeleteConfirmation
+import com.nuvio.app.features.downloads.OpenDownloadsFolderButton
+import com.nuvio.app.features.downloads.formatDownloadPercent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -553,21 +556,7 @@ fun LibraryScreen(
                         }
                     }
                     if (sourceMode == LibraryViewMode.Downloaded) {
-                        IconButton(
-                            onClick = {
-                                if (!DownloadsPlatformDownloader.openDownloadsDirectory()) {
-                                    NuvioToastController.show(openDownloadsDirectoryFailedText)
-                                }
-                            },
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Folder,
-                                contentDescription = stringResource(Res.string.downloads_open_directory),
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        OpenDownloadsFolderButton()
                         if (downloadsUiState.activeItems.isNotEmpty()) {
                             IconButton(
                                 onClick = { showActiveQueuedDialog = true },
@@ -900,17 +889,8 @@ fun LibraryScreen(
 
     val pendingDeletionIds = downloadPendingDeletionIds
     if (!pendingDeletionIds.isNullOrEmpty()) {
-        NuvioStatusModal(
-            title = stringResource(Res.string.action_delete_confirm_title),
-            message = if (pendingDeletionIds.size > 1) {
-                stringResource(Res.string.downloads_delete_selected_confirm, pendingDeletionIds.size)
-            } else {
-                stringResource(Res.string.action_delete_confirm_message)
-            },
-            isVisible = true,
-            destructive = true,
-            confirmText = stringResource(Res.string.action_yes),
-            dismissText = stringResource(Res.string.action_no),
+        DownloadDeleteConfirmation(
+            count = pendingDeletionIds.size,
             onConfirm = {
                 DownloadsRepository.cancelDownloads(pendingDeletionIds)
                 downloadPendingDeletionIds = null
@@ -1574,7 +1554,7 @@ private fun cloudLibraryStatusLine(item: CloudLibraryItem): String {
     return listOfNotNull(
         item.status?.toDisplayStatus(),
         item.sizeBytes?.let(::formatCloudBytes),
-        item.progressFraction?.let { "${(it * 100f).toInt()}%" },
+        item.progressFraction?.let { formatDownloadPercent(it) },
     ).joinToString(" • ").ifBlank { fallback }
 }
 

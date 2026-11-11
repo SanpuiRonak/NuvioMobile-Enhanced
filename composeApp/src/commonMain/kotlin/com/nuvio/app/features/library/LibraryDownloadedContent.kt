@@ -53,6 +53,7 @@ import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.StoredOfflineMeta
 import com.nuvio.app.features.downloads.animatedDownloadProgress
 import com.nuvio.app.features.downloads.formatDownloadBadgeProgress
+import com.nuvio.app.features.downloads.formatDownloadPercent
 import com.nuvio.app.features.downloads.sortedForSeriesDownloads
 import com.nuvio.app.features.downloads.statusCounts
 import com.nuvio.app.features.home.MetaPreview
@@ -301,7 +302,7 @@ private fun StatusBadge(
         DownloadStatus.Paused -> colors.errorContainer.copy(alpha = 0.92f) to colors.onErrorContainer
         else -> colors.surfaceContainer.copy(alpha = 0.92f) to colors.onSurface
     }
-    val percentText = "${(progress * 100).toInt()}%"
+    val percentText = formatDownloadPercent(progress)
     val episodesText = "${item.completedEpisodeCount}/${item.totalEpisodeCount}"
     val text = when (item.status) {
         DownloadStatus.Downloading -> when {
@@ -311,7 +312,7 @@ private fun StatusBadge(
         }
         DownloadStatus.Queued -> {
             val queued = stringResource(Res.string.downloads_status_queued)
-            if (item.isShow) "$episodesText $queued" else queued
+            if (item.isShow) stringResource(Res.string.downloads_episodes_queued, episodesText, queued) else queued
         }
         DownloadStatus.Paused -> {
             val paused = stringResource(Res.string.downloads_badge_paused)

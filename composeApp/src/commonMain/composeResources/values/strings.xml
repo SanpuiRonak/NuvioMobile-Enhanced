@@ -3139,6 +3139,9 @@
     <string name="downloads_show_fallback_title">Show</string>
     <string name="downloads_delete_selected_confirm">Delete %1$d selected downloads?</string>
     <string name="downloads_connecting">Connecting…</string>
+    <string name="downloads_progress_percent">%1$d%%</string>
+    <string name="downloads_episodes_queued">%1$s %2$s</string>
+    <string name="season_download_season_count">%1$s (%2$d)</string>
     <string name="downloads_progress_episodes">%1$d/%2$d eps</string>
     <string name="downloads_action_pause">Pause</string>
     <string name="downloads_action_pause_series">Pause series</string>

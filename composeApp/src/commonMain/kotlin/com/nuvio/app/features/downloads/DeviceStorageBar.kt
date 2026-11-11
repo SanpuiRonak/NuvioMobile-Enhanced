@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -109,27 +110,13 @@ fun DeviceStorageBar(
                         .background(freeSpaceColor),
                 ) {
                     if (downloadsFraction > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                .weight(downloadsFraction)
-                                .fillMaxHeight()
-                                .background(downloadsColor),
-                        )
+                        StorageBarSegment(downloadsFraction, downloadsColor)
                     }
                     if (otherFraction > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                .weight(otherFraction)
-                                .fillMaxHeight()
-                                .background(otherAppsColor),
-                        )
+                        StorageBarSegment(otherFraction, otherAppsColor)
                     }
                     if (freeFraction > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                .weight(freeFraction)
-                                .fillMaxHeight(),
-                        )
+                        StorageBarSegment(freeFraction)
                     }
                 }
             }
@@ -159,6 +146,16 @@ fun DeviceStorageBar(
             }
         }
     }
+}
+
+@Composable
+private fun RowScope.StorageBarSegment(fraction: Float, color: Color? = null) {
+    Box(
+        modifier = Modifier
+            .weight(fraction)
+            .fillMaxHeight()
+            .then(if (color != null) Modifier.background(color) else Modifier),
+    )
 }
 
 @Composable

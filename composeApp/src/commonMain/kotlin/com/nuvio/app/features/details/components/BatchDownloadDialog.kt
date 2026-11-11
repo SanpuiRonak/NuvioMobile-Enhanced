@@ -153,7 +153,9 @@ private fun EpisodeSelectionDialog(
                         val countInSeason = plan.episodesBySeason[seasonNumber].orEmpty().count { episode ->
                             episode.batchKey(seasonNumber) in plan.selectedEpisodeKeys
                         }
-                        val chipText = if (countInSeason > 0) "$seasonLabel ($countInSeason)" else seasonLabel
+                        val chipText = if (countInSeason > 0) {
+                            stringResource(Res.string.season_download_season_count, seasonLabel, countInSeason)
+                        } else seasonLabel
                         val isSelectedSeason = plan.visibleSeason == seasonNumber
 
                         FilterChip(
@@ -351,21 +353,7 @@ private fun SourceSelectionDialog(
                     )
                 }
                 if (isPlanning) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                        Text(
-                            text = stringResource(Res.string.season_download_finding_source),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
+                    FindingSourceIndicator(compact = false)
                 }
             }
 
@@ -467,19 +455,7 @@ private fun EpisodeSourcePlanRow(
                 Spacer(modifier = Modifier.height(2.dp))
                 when {
                     item.status == EpisodePlanStatus.Loading -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(10.dp),
-                                strokeWidth = 1.5.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(Res.string.season_download_finding_source),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        FindingSourceIndicator(compact = true)
                     }
                     item.status == EpisodePlanStatus.AlreadyDownloaded -> {
                         Text(
@@ -499,7 +475,7 @@ private fun EpisodeSourcePlanRow(
                         val badge = item.resolutionLabel
                         val addon = item.streamCandidate.addonName.takeUnless { it.isNullOrBlank() }
                         val size = item.sizeBytes?.takeIf { it > 0 }?.let { formatBytes(it) }
-                        val details = listOfNotNull(badge, addon, size).joinToString(" • ")
+                        val details = streamSourceSummary(badge, addon, size)
                         Text(
                             text = details.ifBlank { item.streamCandidate.name ?: stringResource(Res.string.downloads_stream_selected) },
                             style = MaterialTheme.typography.bodySmall,
@@ -581,7 +557,7 @@ private fun StreamOverrideDialog(
                     val addon = stream.addonName
 
                     val titleText = stream.streamLabel.ifBlank { stream.name ?: stringResource(Res.string.downloads_stream_fallback_title) }
-                    val subtitleText = listOfNotNull(badge, addon, size).joinToString(" • ")
+                    val subtitleText = streamSourceSummary(badge, addon, size)
 
                     Surface(
                         modifier = Modifier
@@ -653,3 +629,25 @@ private fun SelectionTextButton(label: StringResource, onClick: () -> Unit) {
         Text(text = stringResource(label), style = MaterialTheme.typography.labelSmall)
     }
 }
+
+@Composable
+private fun FindingSourceIndicator(compact: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 6.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(if (compact) 10.dp else 14.dp),
+            strokeWidth = if (compact) 1.5.dp else 2.dp,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = stringResource(Res.string.season_download_finding_source),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (compact) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+private fun streamSourceSummary(badge: String?, addon: String?, size: String?): String =
+    listOfNotNull(badge, addon, size).joinToString(" • ")

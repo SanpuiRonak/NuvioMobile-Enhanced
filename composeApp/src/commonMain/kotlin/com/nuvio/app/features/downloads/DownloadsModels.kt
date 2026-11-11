@@ -16,6 +16,9 @@ import org.jetbrains.compose.resources.StringResource
 import nuvio.composeapp.generated.resources.downloads_resolution_720p
 import nuvio.composeapp.generated.resources.downloads_resolution_1080p
 import nuvio.composeapp.generated.resources.downloads_resolution_2160p
+import nuvio.composeapp.generated.resources.downloads_progress_percent
+import org.jetbrains.compose.resources.stringResource
+import androidx.compose.runtime.Composable
 
 @Serializable
 enum class DownloadStatus {
@@ -214,6 +217,13 @@ internal fun formatDownloadBadgeProgress(downloadedBytes: Long, totalBytes: Long
         "${formatBytes(downloadedBytes)}/${formatBytes(totalBytes)}"
     }
 }
+
+internal fun isDownloadableDirectUrl(url: String?): Boolean =
+    url?.trim()?.takeIf { it.isNotBlank() }?.isSupportedDownloadUrl() == true
+
+@Composable
+internal fun formatDownloadPercent(progress: Float): String =
+    stringResource(Res.string.downloads_progress_percent, (progress * 100f).toInt())
 
 private enum class ByteUnit(val bytes: Double) {
     B(1.0),

@@ -106,19 +106,7 @@ fun DownloadsScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            if (!DownloadsPlatformDownloader.openDownloadsDirectory()) {
-                                NuvioToastController.show(openDownloadsDirectoryFailedText)
-                            }
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Folder,
-                            contentDescription = stringResource(Res.string.downloads_open_directory),
-                            tint = tokens.colors.textPrimary,
-                        )
-                    }
+                    OpenDownloadsFolderButton(tint = tokens.colors.textPrimary)
                     if (selectedShowId == null && onOpenSettings != null) {
                         IconButton(onClick = onOpenSettings) {
                             Icon(
@@ -158,13 +146,8 @@ fun DownloadsScreen(
 
     val pendingDeletionId = downloadPendingDeletionId
     if (pendingDeletionId != null) {
-        NuvioStatusModal(
-            title = stringResource(Res.string.action_delete_confirm_title),
-            message = stringResource(Res.string.action_delete_confirm_message),
-            isVisible = true,
-            destructive = true,
-            confirmText = stringResource(Res.string.action_yes),
-            dismissText = stringResource(Res.string.action_no),
+        DownloadDeleteConfirmation(
+            count = 1,
             onConfirm = {
                 DownloadsRepository.cancelDownload(pendingDeletionId)
                 downloadPendingDeletionId = null
