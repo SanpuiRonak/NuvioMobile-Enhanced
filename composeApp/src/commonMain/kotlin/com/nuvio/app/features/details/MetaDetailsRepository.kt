@@ -5,7 +5,7 @@ import com.nuvio.app.core.logging.InAppLogger
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonRepository
-import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.OfflineMetadataRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.fetchAddonResponseText
@@ -123,7 +123,7 @@ object MetaDetailsRepository {
             return
         }
 
-        val savedOfflineMeta = DownloadsRepository.getSavedMetaDetails(id)
+        val savedOfflineMeta = OfflineMetadataRepository.getSavedMetaDetails(id)
         val isOffline = NetworkStatusRepository.uiState.value.isOfflineLike
 
         if (isOffline && publishSavedOfflineMeta(savedOfflineMeta, type, id, requestKey, "Offline")) return
@@ -254,7 +254,7 @@ object MetaDetailsRepository {
             return cachedMeta.withUnreleasedFilter()
         }
 
-        return DownloadsRepository.getSavedMetaDetails(id)?.withUnreleasedFilter()
+        return OfflineMetadataRepository.getSavedMetaDetails(id)?.withUnreleasedFilter()
     }
 
     fun clearCachedMetadata() {
@@ -405,7 +405,7 @@ object MetaDetailsRepository {
                     val meta = details.meta
                     ServerUserStateProjection.apply(details)
                     cachedMetaByRequestKey[requestKey] = CachedMetaEntry(baseMeta = meta)
-                    DownloadsRepository.onMetaLoaded(meta)
+                    OfflineMetadataRepository.onMetaLoaded(meta)
                     _uiState.value = MetaDetailsUiState(meta = meta)
                 },
                 onFailure = { error ->
@@ -620,7 +620,7 @@ object MetaDetailsRepository {
     ) {
         val cachedEntry = CachedMetaEntry(baseMeta = meta)
         cachedMetaByRequestKey[requestKey] = cachedEntry
-        DownloadsRepository.onMetaLoaded(meta)
+        OfflineMetadataRepository.onMetaLoaded(meta)
 
         if (!shouldEnrichForMetaScreen(meta, fallbackItemId, mdbListSettings)) {
             _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())

@@ -5,6 +5,7 @@ import platform.Foundation.NSUserDefaults
 
 internal actual object DownloadsStorage {
     private const val payloadKey = "downloads_payload"
+    private const val offlineMetadataKey = "downloads_offline_metadata"
     private const val downloadLocationUriKey = "download_location_uri"
 
     actual fun loadPayload(): String? =
@@ -12,6 +13,13 @@ internal actual object DownloadsStorage {
 
     actual fun savePayload(payload: String) {
         NSUserDefaults.standardUserDefaults.setObject(payload, forKey = ProfileScopedKey.of(payloadKey))
+    }
+
+    actual fun loadOfflineMetadataPayload(): String? =
+        NSUserDefaults.standardUserDefaults.stringForKey(ProfileScopedKey.of(offlineMetadataKey))
+
+    actual fun saveOfflineMetadataPayload(payload: String) {
+        NSUserDefaults.standardUserDefaults.setObject(payload, forKey = ProfileScopedKey.of(offlineMetadataKey))
     }
 
     actual fun getDownloadLocationUri(): String? =

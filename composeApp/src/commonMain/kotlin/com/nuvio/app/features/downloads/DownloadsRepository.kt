@@ -2,7 +2,6 @@ package com.nuvio.app.features.downloads
 
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.features.details.MetaDetails
-import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.player.SubtitleRequestExtras
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
@@ -35,7 +34,6 @@ object DownloadsRepository {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
-    private val offlineMetadata = OfflineMetadataStore()
     private var hasLoaded = false
     private var isObservingInputs = false
     private var nextDownloadOrdinal = 0L
@@ -88,29 +86,26 @@ object DownloadsRepository {
         activeHandles.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
-        offlineMetadata.clear()
+        OfflineMetadataRepository.clear()
         _uiState.value = DownloadsUiState()
         notifyLiveStatusPlatform()
     }
 
     fun getOfflineMetadata(showId: String): StoredOfflineMeta? {
         ensureLoaded()
-        return offlineMetadata[showId]
+        return OfflineMetadataRepository[showId]
     }
 
     fun getSavedMetaDetails(showId: String): MetaDetails? {
         ensureLoaded()
         val showItems = _uiState.value.items.filter { it.parentMetaId == showId }
-        return offlineMetadata[showId]?.toMetaDetails(showItems)
+        return OfflineMetadataRepository[showId]?.toMetaDetails(showItems)
             ?: showItems.takeIf { it.isNotEmpty() }?.toOfflineMetaDetails(showId)
     }
 
     /** Keeps the offline copy of [meta] current, but only for titles that have downloads. */
     fun onMetaLoaded(meta: MetaDetails) {
-        if (!hasLoaded) return
-        val hasDownloads = _uiState.value.items.any { it.parentMetaId == meta.id }
-        if (!hasDownloads && offlineMetadata[meta.id] == null) return
-        if (offlineMetadata.merge(meta)) persist()
+        OfflineMetadataRepository.onMetaLoaded(meta)
     }
 
     fun findPlayableDownloadByVideoId(videoId: String?): DownloadItem? {
@@ -210,14 +205,14 @@ object DownloadsRepository {
             episodeNumber = episodeNumber,
         )
 
-        val meta = showMeta ?: MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+        val meta = showMeta
         val resolvedEpisodeThumbnail = episodeThumbnail ?: meta?.videos
             ?.firstOrNull { it.season == seasonNumber && it.episode == episodeNumber }
             ?.thumbnail
         if (meta != null) {
-            offlineMetadata.merge(meta)
+            OfflineMetadataRepository.merge(meta)
         } else {
-            offlineMetadata.recordBasic(
+            OfflineMetadataRepository.recordBasic(
                 showId = parentMetaId,
                 type = parentMetaType,
                 title = title,
@@ -455,7 +450,7 @@ object DownloadsRepository {
         }
         val remainingItems = current.filterNot { it.id in ids }
         targets.map { it.parentMetaId }.distinct().forEach { parentId ->
-            if (remainingItems.none { it.parentMetaId == parentId }) offlineMetadata.remove(parentId)
+            if (remainingItems.none { it.parentMetaId == parentId }) OfflineMetadataRepository.remove(parentId)
         }
         val wasDownloading = targets.any { it.status == DownloadStatus.Downloading }
         publish(remainingItems)
@@ -466,18 +461,20 @@ object DownloadsRepository {
     }
 
     private fun loadFromDisk() {
+        OfflineMetadataRepository.reload()
         _hasUnseenCompleted.value = false
         hasLoaded = true
         val payload = DownloadsStorage.loadPayload().orEmpty().trim()
         if (payload.isEmpty()) {
-            offlineMetadata.clear()
+            OfflineMetadataRepository.ensureLoaded()
             _uiState.value = DownloadsUiState()
+            OfflineMetadataRepository.setDownloads(emptyList())
             notifyLiveStatusPlatform()
             return
         }
 
         val decoded = DownloadsCodec.decodePayload(payload)
-        offlineMetadata.replaceAll(decoded.showMetadata)
+        OfflineMetadataRepository.migrateLegacy(decoded.showMetadata)
 
         var shouldPersistNormalized = false
         val normalized = decoded.items
@@ -509,6 +506,7 @@ object DownloadsRepository {
         }
 
         _uiState.value = DownloadsUiState(queuedNormalized)
+        OfflineMetadataRepository.setDownloads(queuedNormalized)
         notifyLiveStatusPlatform()
         if (shouldPersistNormalized) {
             persist()
@@ -626,6 +624,7 @@ object DownloadsRepository {
         _uiState.value = DownloadsUiState(
             items = items,
         )
+        OfflineMetadataRepository.setDownloads(items)
         notifyLiveStatusPlatform()
     }
 
@@ -636,9 +635,7 @@ object DownloadsRepository {
     }
 
     private fun persist() {
-        DownloadsStorage.savePayload(
-            DownloadsCodec.encodePayload(_uiState.value.items, offlineMetadata.snapshot()),
-        )
+        DownloadsStorage.savePayload(DownloadsCodec.encodePayload(_uiState.value.items))
     }
 
     private fun nextDownloadId(nowEpochMs: Long): String {
@@ -677,6 +674,9 @@ private data class StoredDownloadsPayload(
     val showMetadata: Map<String, StoredOfflineMeta> = emptyMap(),
 )
 
+@Serializable
+private data class StoredDownloadItemsPayload(val items: List<DownloadItem> = emptyList())
+
 private object DownloadsCodec {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -694,16 +694,8 @@ private object DownloadsCodec {
         StoredDownloadsPayload(items = items, showMetadata = metadata)
     }.getOrDefault(StoredDownloadsPayload())
 
-    fun encodePayload(
-        items: Collection<DownloadItem>,
-        showMetadata: Map<String, StoredOfflineMeta>,
-    ): String =
-        json.encodeToString(
-            StoredDownloadsPayload(
-                items = items.toList(),
-                showMetadata = showMetadata,
-            ),
-        )
+    fun encodePayload(items: Collection<DownloadItem>): String =
+        json.encodeToString(StoredDownloadItemsPayload(items = items.toList()))
 }
 
 private const val PROGRESS_PERSIST_INTERVAL_MS = 5_000L

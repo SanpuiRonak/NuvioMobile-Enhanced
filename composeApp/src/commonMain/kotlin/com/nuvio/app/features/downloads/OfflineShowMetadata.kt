@@ -4,6 +4,9 @@ import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaPerson
 import com.nuvio.app.features.details.MetaVideo
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 private const val MAX_STORED_VIDEOS = 2_000
 private const val MAX_STORED_CAST = 50
@@ -115,7 +118,6 @@ internal class OfflineMetadataStore {
         val isNewEpisode = episode != null &&
             existing.videos.none { it.season == episode.season && it.episode == episode.episode }
         byShowId[showId] = existing.copy(
-            title = existing.title.boundedTitle(),
             logo = existing.logo ?: logo,
             poster = existing.poster ?: poster,
             background = existing.background ?: background,
@@ -125,6 +127,94 @@ internal class OfflineMetadataStore {
             )) else existing.videos).take(MAX_STORED_VIDEOS),
         )
     }
+}
+
+/** Persists offline title details independently from frequently updated download progress. */
+internal object OfflineMetadataRepository {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val store = OfflineMetadataStore()
+    private var downloads: List<DownloadItem> = emptyList()
+    private var loaded = false
+
+    fun ensureLoaded() {
+        if (loaded) return
+        loaded = true
+        store.replaceAll(runCatching {
+            DownloadsStorage.loadOfflineMetadataPayload()?.let {
+                json.decodeFromString<Map<String, StoredOfflineMeta>>(it)
+            }.orEmpty()
+        }.getOrDefault(emptyMap()))
+    }
+
+    fun reload() {
+        loaded = false
+        ensureLoaded()
+    }
+
+    fun clear() {
+        store.clear()
+        downloads = emptyList()
+        loaded = true
+    }
+
+    operator fun get(showId: String): StoredOfflineMeta? {
+        ensureLoaded()
+        return store[showId]
+    }
+
+    fun getSavedMetaDetails(showId: String): MetaDetails? {
+        val showItems = downloads.filter { it.parentMetaId == showId }
+        return get(showId)?.toMetaDetails(showItems)
+            ?: showItems.takeIf { it.isNotEmpty() }?.toOfflineMetaDetails(showId)
+    }
+
+    fun setDownloads(items: List<DownloadItem>) { downloads = items }
+
+    fun onMetaLoaded(meta: MetaDetails) {
+        if (downloads.none { it.parentMetaId == meta.id } && get(meta.id) == null) return
+        merge(meta)
+    }
+
+    fun merge(meta: MetaDetails): Boolean {
+        ensureLoaded()
+        if (!store.merge(meta)) return false
+        persist()
+        return true
+    }
+
+    fun recordBasic(
+        showId: String,
+        type: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        episode: StoredDownloadedVideoMeta?,
+    ) {
+        ensureLoaded()
+        val before = store.snapshot()
+        store.recordBasic(showId, type, title, logo, poster, background, episode)
+        if (store.snapshot() != before) persist()
+    }
+
+    fun remove(showId: String) {
+        ensureLoaded()
+        val before = store[showId] ?: return
+        store.remove(showId)
+        if (before != null) persist()
+    }
+
+    fun migrateLegacy(metadata: Map<String, StoredOfflineMeta>) {
+        ensureLoaded()
+        if (metadata.isEmpty()) return
+        val merged = store.snapshot() + metadata.filterKeys { it !in store.snapshot() }
+        if (merged != store.snapshot()) {
+            store.replaceAll(merged)
+            persist()
+        }
+    }
+
+    private fun persist() = DownloadsStorage.saveOfflineMetadataPayload(json.encodeToString(store.snapshot()))
 }
 
 /** Minimal episode details for a download whose show metadata doesn't list it. */
@@ -157,14 +247,14 @@ fun MetaVideo.toStored(): StoredDownloadedVideoMeta =
 fun StoredDownloadedVideoMeta.toMetaVideo(): MetaVideo =
     MetaVideo(
         id = id,
-        title = title.boundedTitle(),
+        title = title,
         released = released,
         available = true,
         thumbnail = thumbnail,
         seasonPoster = seasonPoster,
         season = season,
         episode = episode,
-        overview = overview.boundedDescription(),
+        overview = overview,
         runtime = runtime,
         tmdbRating = tmdbRating,
         imdbRating = imdbRating,
@@ -190,7 +280,7 @@ fun StoredDownloadedCastMeta.toMetaPerson(): MetaPerson =
 /** Builds offline details from the stored show metadata plus the show's downloaded items. */
 fun StoredOfflineMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDetails {
     val downloadedEpisodes = showDownloads
-        .filter { it.parentMetaId == showId && it.isEpisode }
+        .filter { it.isEpisode }
         .sortedForSeriesDownloads()
 
     val storedVideos = videos.map { it.toMetaVideo() }
@@ -236,7 +326,7 @@ fun StoredOfflineMeta.toMetaDetails(showDownloads: List<DownloadItem>): MetaDeta
 
 /** Basic details for downloads saved without show metadata (e.g. before it was stored). */
 fun List<DownloadItem>.toOfflineMetaDetails(showId: String): MetaDetails {
-    val showEpisodes = filter { it.parentMetaId == showId }
+    val showEpisodes = this
     val first = showEpisodes.firstOrNull()
     return MetaDetails(
         id = showId,

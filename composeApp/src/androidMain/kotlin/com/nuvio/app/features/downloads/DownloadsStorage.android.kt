@@ -7,6 +7,7 @@ import com.nuvio.app.core.storage.ProfileScopedKey
 internal actual object DownloadsStorage {
     private const val preferencesName = "nuvio_downloads"
     private const val payloadKey = "downloads_payload"
+    private const val offlineMetadataKey = "downloads_offline_metadata"
     private const val downloadLocationUriKey = "download_location_uri"
 
     private var preferences: SharedPreferences? = null
@@ -23,6 +24,13 @@ internal actual object DownloadsStorage {
             ?.edit()
             ?.putString(ProfileScopedKey.of(payloadKey), payload)
             ?.apply()
+    }
+
+    actual fun loadOfflineMetadataPayload(): String? =
+        preferences?.getString(ProfileScopedKey.of(offlineMetadataKey), null)
+
+    actual fun saveOfflineMetadataPayload(payload: String) {
+        preferences?.edit()?.putString(ProfileScopedKey.of(offlineMetadataKey), payload)?.apply()
     }
 
     actual fun getDownloadLocationUri(): String? =
