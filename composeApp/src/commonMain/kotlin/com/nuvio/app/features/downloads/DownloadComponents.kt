@@ -190,36 +190,37 @@ internal fun DownloadRevealImage(
                 val revealed = animatedDownloadProgress(progress)
                 val segmentTop = segmentHeight * index
                 val revealedHeight = segmentHeight * revealed
-                if (revealedHeight <= 0.5.dp) return@key
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .offset(y = segmentTop)
-                        .height(revealedHeight)
-                        .clipToBounds(),
-                ) {
-                    if (imageUrl != null) {
-                        AsyncImage(
-                            model = imageUrl,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .width(fullWidth)
-                                .height(fullHeight)
-                                .offset(y = -segmentTop),
-                        )
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize().background(fillColor))
-                    }
-                    if (edgeColor != null && revealed < 0.999f) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .height(2.5.dp)
-                                .background(edgeColor),
-                        )
+                if (revealedHeight > 0.5.dp) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .offset(y = segmentTop)
+                            .height(revealedHeight)
+                            .clipToBounds(),
+                    ) {
+                        if (imageUrl != null) {
+                            AsyncImage(
+                                model = imageUrl,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .width(fullWidth)
+                                    .height(fullHeight)
+                                    .offset(y = -segmentTop),
+                            )
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize().background(fillColor))
+                        }
+                        if (edgeColor != null && revealed < 0.999f) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(2.5.dp)
+                                    .background(edgeColor),
+                            )
+                        }
                     }
                 }
             }
