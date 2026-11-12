@@ -78,22 +78,12 @@ object DownloadsRepository {
         _hasUnseenCompleted.value = false
     }
 
+    /**
+     * Resets in-memory state on sign-out. Must not write storage: by the time this runs the
+     * active profile has already been reset, so a write would land on another profile's key.
+     * Unfinished records for every profile are removed by the platform storage wipe.
+     */
     fun clearLocalState() {
-        val storedItems = if (hasLoaded) _uiState.value.items else {
-            runCatching { DownloadsCodec.decodePayload(DownloadsStorage.loadPayload().orEmpty()).items }.getOrDefault(emptyList())
-        }
-        val unfinished = storedItems.filter { it.status != DownloadStatus.Completed }
-        unfinished.forEach { item ->
-            activeHandles.remove(item.id)?.cancel()
-            DownloadsPlatformDownloader.removePartialFile(item.fileName)
-        }
-        val completed = storedItems.filter { it.status == DownloadStatus.Completed }
-        if (hasLoaded) {
-            publish(completed)
-            persist()
-        } else {
-            DownloadsStorage.savePayload(DownloadsCodec.encodePayload(completed))
-        }
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
         hasLoaded = false
