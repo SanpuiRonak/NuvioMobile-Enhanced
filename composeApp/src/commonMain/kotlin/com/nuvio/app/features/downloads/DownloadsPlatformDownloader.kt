@@ -19,9 +19,14 @@ internal expect object DownloadsPlatformDownloader {
         onSuccess: (localFileUri: String, totalBytes: Long?) -> Unit,
         onFailure: (message: String) -> Unit,
         onPaused: () -> Unit,
+        onQueued: () -> Unit,
     ): DownloadsTaskHandle
 
     fun restoreItem(item: DownloadItem): DownloadItem
+
+    fun pauseRestoredItem(item: DownloadItem)
+
+    fun clearUnfinishedTransfers()
 
     fun removeFile(localFileUri: String?): Boolean
 

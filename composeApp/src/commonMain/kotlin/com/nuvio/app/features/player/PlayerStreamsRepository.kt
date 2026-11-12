@@ -22,6 +22,7 @@ import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamBadgePresentation
 import com.nuvio.app.features.streams.StreamBadgeSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamSourceLoader
 import com.nuvio.app.features.streams.StreamLoadCompletion
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
@@ -221,12 +222,7 @@ object PlayerStreamsRepository {
         if (embeddedStreams.isNotEmpty()) {
             log.d { "Using ${embeddedStreams.size} embedded streams for type=$type id=$videoId" }
             InAppLogger.info("Streams/PlayerStreamsRepository", "Using embedded streams count=${embeddedStreams.size} type=$type id=$videoId")
-            val group = AddonStreamGroup(
-                addonName = embeddedStreams.first().addonName,
-                addonId = "embedded",
-                streams = embeddedStreams,
-                isLoading = false,
-            )
+            val group = StreamSourceLoader.embeddedStreamGroup(embeddedStreams)
             val presentedGroup = StreamBadgePresentation.apply(
                 groups = listOf(group),
                 rules = streamBadgeRules,

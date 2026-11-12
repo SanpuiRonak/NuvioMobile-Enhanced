@@ -81,7 +81,15 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 }, ContextCompat.getMainExecutor(context))
             }
         } catch (error: Exception) {
-            fail(transfer, error)
+            if (Build.VERSION.SDK_INT >= 34) {
+                store.update(item.fileName, transfer.generation) {
+                    it.copy(item = it.item.copy(status = DownloadStatus.Queued, errorMessage = null))
+                }
+                cancelScheduled(transfer)
+                Log.w(TAG, "Download is queued until the app returns to foreground", error)
+            } else {
+                fail(transfer, error)
+            }
         }
         return store.get(item.fileName) ?: transfer
     }
@@ -90,7 +98,10 @@ internal class AndroidDownloadScheduler(val context: Context) {
     internal fun buildJob(transfer: AndroidDownloadTransfer): JobInfo =
         JobInfo.Builder(transfer.jobId, ComponentName(context, DownloadsTransferJobService::class.java))
             .setUserInitiated(true)
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+            .setRequiredNetworkType(
+                if (DownloadsSettingsRepository.allowMobileDataDownloads.value) JobInfo.NETWORK_TYPE_ANY
+                else JobInfo.NETWORK_TYPE_UNMETERED,
+            )
             .setPersisted(true)
             .setEstimatedNetworkBytes(transfer.item.totalBytes ?: JobInfo.NETWORK_BYTES_UNKNOWN.toLong(), 0L)
             .setBackoffCriteria(30_000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
@@ -114,7 +125,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
             reschedule(item.fileName)
             transfer = store.get(item.fileName) ?: transfer
         }
-        return transfer.item
+        return if (item.status == DownloadStatus.Queued) item else transfer.item
     }
 
     fun reschedule(fileName: String) {
@@ -155,6 +166,13 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 }
             }
         }
+    }
+
+    fun clearUnfinishedTransfers() {
+        store.transfers.value.values
+            .filter { it.item.status != DownloadStatus.Completed }
+            .map { it.item.fileName }
+            .forEach(::remove)
     }
 
     private fun cancelScheduled(transfer: AndroidDownloadTransfer) {

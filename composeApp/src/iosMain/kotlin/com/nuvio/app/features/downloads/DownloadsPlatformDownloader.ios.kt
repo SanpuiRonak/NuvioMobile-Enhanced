@@ -104,6 +104,7 @@ internal actual object DownloadsPlatformDownloader {
         onSuccess: (localFileUri: String, totalBytes: Long?) -> Unit,
         onFailure: (message: String) -> Unit,
         onPaused: () -> Unit,
+        onQueued: () -> Unit,
     ): DownloadsTaskHandle {
         prepareDownloadSubtitles(request.item.id, request)
         IosBackgroundDownloadCoordinator.startOrResume(
@@ -121,6 +122,10 @@ internal actual object DownloadsPlatformDownloader {
         } else {
             item
         }
+
+    actual fun pauseRestoredItem(item: DownloadItem) = Unit
+
+    actual fun clearUnfinishedTransfers() = Unit
 
     actual fun removeFile(localFileUri: String?): Boolean {
         if (localFileUri.isNullOrBlank()) return false
@@ -233,7 +238,7 @@ private class IosBackgroundDownloadCoordinatorImpl : NSObject(), NSURLSessionDow
             BACKGROUND_SESSION_IDENTIFIER,
         ).apply {
             timeoutIntervalForResource = DOWNLOAD_RESOURCE_TIMEOUT_SECONDS
-            allowsCellularAccess = true
+            allowsCellularAccess = DownloadsSettingsRepository.allowMobileDataDownloads.value
             sessionSendsLaunchEvents = true
         }
         val created = NSURLSession.sessionWithConfiguration(

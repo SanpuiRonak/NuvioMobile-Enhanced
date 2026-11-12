@@ -17,6 +17,8 @@ import com.nuvio.app.features.collection.CollectionMobileSettingsRepository
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
+import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.BatchDownloadCoordinator
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
 import com.nuvio.app.features.library.LibraryRepository
@@ -119,6 +121,8 @@ internal object LocalAccountDataCleaner {
         CatalogRepository.clear()
         StreamsRepository.clear()
         MetaDetailsRepository.clear()
+        DownloadsRepository.clearLocalState()
+        BatchDownloadCoordinator.clearLocalState()
         SearchRepository.reset()
         SubtitleRepository.clear()
         PlayerLaunchStore.clear()

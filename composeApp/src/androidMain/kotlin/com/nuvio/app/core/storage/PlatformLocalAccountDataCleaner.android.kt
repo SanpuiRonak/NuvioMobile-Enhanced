@@ -1,6 +1,8 @@
 package com.nuvio.app.core.storage
 
 import android.content.Context
+import com.nuvio.app.core.storage.ProfileScopedKey
+import com.nuvio.app.features.profiles.MAX_PROFILES
 
 internal actual object PlatformLocalAccountDataCleaner {
     private val preferenceNames = listOf(
@@ -62,6 +64,12 @@ internal actual object PlatformLocalAccountDataCleaner {
                 .clear()
                 .apply()
         }
+        val downloads = context.getSharedPreferences("nuvio_downloads", Context.MODE_PRIVATE)
+        downloads.edit().apply {
+            (1..MAX_PROFILES).forEach { profileId -> remove(ProfileScopedKey.of("downloads_offline_metadata", profileId)) }
+        }.apply()
+        com.nuvio.app.features.downloads.DownloadsStorage.clearUnfinishedDownloads()
+        com.nuvio.app.features.downloads.DownloadsPlatformDownloader.clearUnfinishedTransfers()
         context.filesDir.resolve("nuvio_plugin_scrapers").deleteRecursively()
     }
 }
