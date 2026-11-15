@@ -20,6 +20,16 @@
       "category": "entertainment",
       "versions": [
         {
+          "version": "0.6.13",
+          "buildVersion": "156",
+          "date": "2026-11-15T17:55:13Z",
+          "localizedDescription": "Built from parent release [0.6.13-beta](https://github.com/luqmanfadlli/NuvioMobile-Enhanced/releases/tag/0.6.13-beta) plus:\n\n- feat(downloads): add season batch downloads and storage management\n",
+          "downloadURL": "https://github.com/SanpuiRonak/NuvioMobile-Enhanced/releases/download/0.6.13-beta/nuvio-0.6.13-enhanced-release.ipa",
+          "size": 76096634,
+          "sha256": "536ccf0ce8c575cb2584aaba47dd843fb73770242f887c8a9027a41127afcaa3",
+          "minOSVersion": "16.1"
+        },
+        {
           "version": "0.6.9",
           "buildVersion": "152",
           "date": "2026-11-06T23:21:17Z",
