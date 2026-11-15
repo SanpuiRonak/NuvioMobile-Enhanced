@@ -1,0 +1,186 @@
+# Weekly: rebase FEATURE_BRANCH onto the parent's latest release and publish an unsigned IPA
+# under the same tag in this fork, then add it to store.json (AltStore/SideStore source).
+# Not mobile-release.yml: its publish mode only runs from the default branch, needs the
+# version bump to be the last commit, and requires an Android keystore.
+name: Sync Upstream Release
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+env:
+  PARENT_REPO: luqmanfadlli/NuvioMobile-Enhanced
+  FEATURE_BRANCH: feat/batch-downloads
+
+jobs:
+  sync:
+    name: Rebase onto parent release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      branch: ${{ steps.rebase.outputs.branch }}
+    steps:
+      - name: Find unbuilt parent release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release view --repo "${PARENT_REPO}" --json tagName -q .tagName)"
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "${tag} is already released here; nothing to do."
+          else
+            echo "Building ${tag}."
+            echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check out feature branch
+        if: steps.check.outputs.tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.FEATURE_BRANCH }}
+          fetch-depth: 0
+          # shortcut: github.token cannot push commits that change .github/workflows; once the parent
+          # edits a workflow, add a SYNC_TOKEN secret (PAT with contents + workflows write).
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Rebase and push
+        id: rebase
+        if: steps.check.outputs.tag
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git fetch --no-tags "https://github.com/${PARENT_REPO}.git" "+refs/tags/${TAG}:refs/tags/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Conflicts fail the run on purpose: rebase the feature branch by hand, then re-run.
+          git rebase --onto "${TAG}" "$(git merge-base HEAD "${TAG}")"
+          branch="auto/${FEATURE_BRANCH#*/}-${TAG}"
+          git push --force origin "HEAD:refs/heads/${branch}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "Built from parent release [${TAG}](https://github.com/${PARENT_REPO}/releases/tag/${TAG}) plus:"
+            echo
+            git log --format='- %s' "${TAG}..HEAD"
+          } > release-notes.md
+
+      - name: Upload release notes
+        if: steps.check.outputs.tag
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  # Same build as the ios job in mobile-release.yml.
+  ios:
+    name: Build iOS IPA
+    needs: sync
+    if: needs.sync.outputs.tag
+    runs-on: xcode-27
+    timeout-minutes: 180
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      GRADLE_OPTS: -Dfile.encoding=UTF-8
+      RELEASE_PROPERTIES_BASE64: ${{ secrets.NUVIO_LOCAL_PROPERTIES_BASE64 }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync.outputs.branch }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Cache Kotlin Native
+        uses: actions/cache@v5
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            konan-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure runtime properties
+        # Optional secret: missing API keys fall back to defaults in composeApp/build.gradle.kts.
+        run: |
+          printf '%s' "${RELEASE_PROPERTIES_BASE64}" | base64 --decode > local.properties
+          sed -i '' -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_STORE_FILE)[[:space:]]*=/d' local.properties
+
+      - name: Constrain Gradle memory for the hosted runner
+        run: |
+          gradle_user_home="${GRADLE_USER_HOME:-${HOME}/.gradle}"
+          mkdir -p "${gradle_user_home}"
+          cat >> "${gradle_user_home}/gradle.properties" <<'EOF'
+          org.gradle.jvmargs=-Xmx2048M -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=768M -XX:+UseG1GC
+          kotlin.daemon.jvmargs=-Xmx1024M
+          kotlin.native.jvmArgs=-Xmx9216M -XX:+UseG1GC
+          org.gradle.parallel=false
+          org.gradle.workers.max=1
+          kotlin.native.disableCompilerDaemon=true
+          nuvio.ios.releaseDisablePhases=DevirtualizationAnalysis,Devirtualization,RemoveRedundantCallsToStaticInitializersPhase
+          EOF
+
+      - name: Prepare iOS dependencies
+        run: ./scripts/prepare-ios-dependencies.sh
+
+      - name: Build unsigned IPA
+        env:
+          NUVIO_KOTLIN_NATIVE_JVMARGS: -Xmx9216M -XX:+UseG1GC
+        run: ./scripts/build-ios-ipa.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipa
+          path: build/ios-ipa/*.ipa
+          if-no-files-found: error
+
+  release:
+    name: Publish release and sideload source
+    needs: [sync, ios]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.sync.outputs.tag }}
+      BRANCH: ${{ needs.sync.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        run: |
+          gh release create "${TAG}" assets/*.ipa \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${BRANCH}" \
+            --title "${TAG}" \
+            --notes-file assets/release-notes.md
+
+      - name: Update store.json
+        run: |
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")"
+          ipa="$(ls assets/*.ipa)"
+          python3 scripts/update-store-source.py \
+            --source store.json \
+            --ipa "${ipa}" \
+            --release-notes assets/release-notes.md \
+            --release-version "${TAG%-beta}" \
+            --release-date "$(jq -r .published_at <<<"${release_json}")" \
+            --download-url "$(jq -r '.assets[] | select(.name | endswith(".ipa")) | .browser_download_url' <<<"${release_json}")"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add store.json
+          git commit -m "chore(store): publish ${TAG}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
